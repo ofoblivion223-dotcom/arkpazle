@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>エンドフィールド パズルソルバー</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=Roboto+Condensed:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>DELTAロボットチューン</h1>
+          <p>スクショを読み込んだら、あとはデルタと一緒に盤面を読んで答えまで走るよ。</p>
+        </div>
+        <div class="actions">
+          <button id="autoAnalyzeBtn" class="primary dev-only">自動解析</button>
+          <button id="solveBtn" class="primary dev-only">解く</button>
+          <button id="deltaPresetBtn" class="dev-only">六つ目 1/2</button>
+          <button id="sampleBtn" class="dev-only">サンプル</button>
+        </div>
+      </header>
+      <svg width="0" height="0" aria-hidden="true" focusable="false">
+        <defs>
+          <filter id="pieceStroke">
+            <feMorphology in="SourceAlpha" operator="dilate" radius="1.5" result="dilated" />
+            <feFlood flood-color="#080c0d" result="strokeColor" />
+            <feComposite in="strokeColor" in2="dilated" operator="in" result="stroke" />
+            <feMerge>
+              <feMergeNode in="stroke" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+      </svg>
+
+      <section class="layout">
+        <aside class="panel controls">
+          <div class="manual-section">
+            <h2>補助チェック</h2>
+            <p>読み取りが怪しいところだけ、ここで軽く見直します。</p>
+          </div>
+
+          <div id="recognitionGuide" class="recognition-guide"></div>
+
+          <div class="manual-subsection correction-step">
+            <h2>STEP 4 盤面補正</h2>
+            <p class="control-hint">画像上の黄色い枠と作業場の盤面を見比べてください。枠がずれている時だけ「左上1マスで補正」を使います。自動補正がうまくいっていれば、このSTEPは飛ばして大丈夫です。</p>
+            <button id="selectCellBtn">左上1マスで補正</button>
+          </div>
+
+          <div class="manual-subsection dev-only">
+            <h2>行・列条件</h2>
+            <div id="bulkRequirements" class="bulk-reqs"></div>
+          </div>
+
+          <div class="manual-subsection">
+            <h2>色</h2>
+            <p class="control-hint">色はパズルごとに変更できます。画像認識はここに登録した色を手がかりに読むため、違う色の問題では追加・削除してください。</p>
+            <div id="colorList" class="color-list"></div>
+            <button id="addColorBtn">色を追加</button>
+          </div>
+
+        </aside>
+
+        <section class="workspace">
+          <section class="panel reference-panel">
+            <div class="section-head">
+              <h2 class="start-title">スタート</h2>
+              <div class="reference-actions reference-primary-actions">
+                <label class="file-button">
+                  STEP 1 画像を開く
+                  <input id="imageInput" type="file" accept="image/*" />
+                </label>
+                <div class="board-size-inline">
+                  <span>STEP 2</span>
+                  <label>
+                    幅
+                    <input id="widthInput" type="number" min="1" max="14" value="6" />
+                  </label>
+                  <label>
+                    高さ
+                    <input id="heightInput" type="number" min="1" max="14" value="6" />
+                  </label>
+                  <span class="step-arrow">→</span>
+                  <button id="resizeBtn" class="create-board-button">盤面を作成</button>
+                  <div id="boardCreateFeedback" class="board-create-feedback" aria-live="polite"></div>
+                </div>
+                <button id="autoAnalyzeInlineBtn" class="primary">STEP 3 自動解析</button>
+                <span class="auto-analyze-note">画像を読み込んで、自動で答えを見つけるよ</span>
+                <label class="mode-control bar-mode-control" hidden>
+                  バー表示
+                  <select id="barModeSelect">
+                    <option value="shape">図形</option>
+                    <option value="number">数字</option>
+                  </select>
+                </label>
+                <label class="zoom-control">
+                  拡大
+                  <input id="imageZoom" type="range" min="40" max="180" value="100" />
+                </label>
+                <button id="clearImageBtn" hidden>閉じる</button>
+                <button id="resetBtn" class="subtle-danger">初期化</button>
+              </div>
+              <div class="reference-actions dev-only">
+                <button id="selectBoardBtn">盤面範囲</button>
+                <button id="clearBoardSelectionBtn">範囲解除</button>
+                <label class="mode-control">
+                  画像
+                  <select id="imageModeSelect">
+                    <option value="completed">完成済み</option>
+                    <option value="unfinished">未完成</option>
+                  </select>
+                </label>
+                <button id="toggleAdvancedBtn">詳細</button>
+              </div>
+              <div id="advancedReferenceActions" class="reference-actions advanced-actions dev-only" hidden>
+                <button id="detectCellsBtn">盤面を読む</button>
+                <button id="detectBlockedBtn">不可だけ読む</button>
+                <button id="detectBarsBtn">バーを読む</button>
+                <button id="detectPiecesBtn">ピース候補</button>
+                <button id="toggleDebugBtn">検出表示</button>
+              </div>
+            </div>
+
+            <div class="flow-strip workflow-guide" aria-label="作業手順">
+              <div class="flow-step">
+                <strong>1</strong>
+                <span>画像を開く</span>
+              </div>
+              <div class="flow-step">
+                <strong>2</strong>
+                <span>盤面生成</span>
+              </div>
+              <div class="flow-step">
+                <strong>3</strong>
+                <span>自動解析</span>
+              </div>
+              <div class="flow-step">
+                <strong>4</strong>
+                <span>盤面確認</span>
+                <small>画像上の枠と作業場を見比べる。ずれていた時だけ左上1マス</small>
+              </div>
+              <div class="flow-step">
+                <strong>5</strong>
+                <span>ピース確認</span>
+                <small>切り取り画像と形を見比べ、違えば下で手直し</small>
+              </div>
+              <div class="flow-step flow-step-primary">
+                <strong>6</strong>
+                <span>PROTOCOL RUN</span>
+                <small>条件をロックして配置演算へ。迷う数字は後回しでOK</small>
+              </div>
+            </div>
+
+            <div id="referenceHint" class="reference-hint">まずスクショを読み込みます。自動解析のあと、黄色い盤面枠がずれていなければ、そのままピース確認へ進めます。</div>
+            <details class="test-steps dev-only">
+              <summary>テスト手順</summary>
+              <ol>
+                <li>左の設定で盤面サイズを実際の盤面に合わせます。</li>
+                <li>「画像を開く」でスクショを読み込みます。</li>
+                <li>盤面がずれた場合だけ「左上1マス」または「盤面範囲」で補正します。</li>
+                <li>「自動解析」を押し、盤面・ピース・バー下書きを反映します。</li>
+                <li>バーを少し直して「解く」を押します。</li>
+              </ol>
+            </details>
+            <div id="referenceEmpty" class="reference-empty">スクショを読み込むと、ここに表示されます。</div>
+            <div id="referenceViewport" class="reference-viewport" hidden>
+              <div id="referenceStage" class="reference-stage">
+                <img id="referenceImage" alt="参照スクリーンショット" />
+                <div id="boardOverlay" class="board-overlay" hidden></div>
+                <div id="debugOverlay" class="debug-overlay" hidden></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel board-panel">
+            <div class="section-head">
+              <h2>STEP 6 プロトコル実行</h2>
+              <span id="boardSizeLabel"></span>
+            </div>
+            <div class="board-work-area">
+              <div id="boardMatrix" class="board-matrix">
+                <div class="corner-label"></div>
+                <div id="columnRequirements" class="column-reqs"></div>
+                <div id="rowRequirements" class="row-reqs"></div>
+                <div id="boardGrid" class="board-grid" aria-label="盤面"></div>
+              </div>
+              <section class="solve-console">
+                <button id="solveMainBtn" class="primary solve-main-button">RUN PROTOCOL</button>
+                <div id="statusBox" class="status">未実行</div>
+                <div class="solve-note">
+                  STEP 6: 合っている行・列だけロックします。0や最大値に近い行・列、固定マスがある行・列から固めると演算が軽くなります。怪しい数字は未確定のままでも大丈夫です。
+                </div>
+                <div class="manual-subsection board-tools-panel">
+                  <h2>盤面の微調整</h2>
+                  <p class="control-hint">モードを選んで、盤面のマスをクリックします。空マス、置けないマス、固定マスをここで最終調整できます。</p>
+                  <div id="toolList" class="tool-list"></div>
+                </div>
+              </section>
+              <section class="board-solution">
+                <div class="section-head compact-head">
+                  <h2>演算結果</h2>
+                  <div class="solution-nav">
+                    <button id="prevSolutionBtn">前</button>
+                    <span id="solutionLabel">0 / 0</span>
+                    <button id="nextSolutionBtn">次</button>
+                  </div>
+                </div>
+                <div id="solutionGrid" class="solution-grid"></div>
+              </section>
+            </div>
+          </section>
+
+          <section class="panel piece-panel">
+            <div class="section-head">
+              <div>
+                <h2>STEP 5 ピース確認</h2>
+                <p>画像候補は間違うことがあります。形が違うピースはマスをクリックして直してください。</p>
+              </div>
+              <button id="addPieceBtn">ピースを追加</button>
+            </div>
+            <div id="pieceList" class="piece-list"></div>
+          </section>
+        </section>
+
+        <aside class="panel output dev-only">
+          <h2>メモ</h2>
+          <div class="side-note">解の結果は盤面の近くに表示します。ここは通常操作では使いません。</div>
+          <div id="diagnosticsBox" class="diagnostics dev-only"></div>
+          <div id="barCandidatePanel" class="bar-candidate-panel dev-only"></div>
+
+          <section class="json-panel dev-only">
+            <h2>JSON</h2>
+            <div class="json-actions">
+              <button id="exportBtn">出力</button>
+              <button id="importBtn">読み込み</button>
+            </div>
+            <textarea id="jsonBox" spellcheck="false"></textarea>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
