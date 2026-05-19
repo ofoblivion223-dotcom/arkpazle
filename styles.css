@@ -319,7 +319,7 @@ p {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(320px, 0.88fr) minmax(520px, 1.12fr);
+  grid-template-columns: minmax(260px, 0.72fr) minmax(620px, 1.28fr);
   gap: 14px;
   min-width: 0;
 }
@@ -871,11 +871,20 @@ label {
   grid-template-columns: 1fr;
   gap: 10px;
   align-items: stretch;
-  min-width: 220px;
+  min-width: 210px;
 }
 
 .board-tools-panel {
   margin-top: 0;
+}
+
+.board-tools-panel .tool-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.board-tools-panel .tool-button {
+  min-height: 48px;
+  padding: 9px 10px;
 }
 
 .solve-main-button {
@@ -917,15 +926,14 @@ label {
   gap: 4px;
   align-items: start;
   width: max-content;
-  max-width: 100%;
   overflow-x: auto;
   padding-bottom: 4px;
 }
 
 .board-work-area {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
+  grid-template-columns: max-content minmax(210px, 1fr);
+  gap: 14px;
   align-items: start;
 }
 
