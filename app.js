@@ -163,10 +163,10 @@ function render() {
 }
 
 function boardAssistSuggestion() {
-  if (!state.referenceImage.src) return "画像を開いてから解析します。";
-  if (!state.referenceImage.boardRect) return "盤面が未確定です。まず自動解析、ずれたら「左上1マス」で補助してください。";
-  if (state.referenceImage.manualBoardRect) return "盤面は手動で確定済みです。この状態で自動解析すると、バーとピースを読み直します。";
-  return "盤面は自動候補です。バー数が合わない場合は「左上1マス」で盤面を確定してください。";
+  if (!state.referenceImage.src) return "スクショを読み込むと、デルタ解析を始められます。";
+  if (!state.referenceImage.boardRect) return "まずデルタ解析を押します。黄色い枠がずれた時だけ、左上1マスで補正してください。";
+  if (state.referenceImage.manualBoardRect) return "盤面は補正済みです。もう一度デルタ解析を押すと、バーとピースを読み直します。";
+  return "黄色い枠が盤面に合っていれば、そのままピース確認へ進めます。ずれていたら左上1マスで補正します。";
 }
 
 function renderRecognitionGuide() {
@@ -330,18 +330,18 @@ function renderReferenceImage() {
     hint.textContent = state.referenceImage.selecting
       ? state.referenceImage.firstPoint
         ? state.referenceImage.selectionMode === "cell"
-          ? "左上マスの右下をクリックしてください。"
-          : "盤面の右下をクリックしてください。"
+          ? "次に、左上1マスの右下をクリックしてください。"
+          : "次に、盤面全体の右下をクリックしてください。"
         : state.referenceImage.selectionMode === "cell"
-          ? "盤面の左上マス、その左上をクリックしてください。"
-          : "盤面の左上をクリックしてください。"
-      : "画像を読み込んだあと、「盤面範囲」を押して左上と右下をクリックします。";
+          ? "黄色い枠を合わせるため、まず左上1マスの左上をクリックしてください。"
+          : "盤面全体の左上をクリックしてください。"
+      : "スクショを読み込んだら、デルタ解析で盤面を探します。";
     if (!state.referenceImage.selecting) {
       hint.textContent = state.referenceImage.boardRect
         ? state.referenceImage.manualBoardRect
-          ? "盤面は手動で確定済みです。ずれていなければ自動解析を押してください。"
-          : "盤面は自動候補です。ずれている場合は「左上1マス」で補正してください。"
-        : "画像を読み込んだあと、まず自動解析。ずれた場合は「左上1マス」で盤面だけ補助します。";
+          ? "盤面は補正済みです。ずれていなければデルタ解析でバーとピースを読み直します。"
+          : "黄色い枠が盤面に合っていればOKです。ずれている時だけ「左上1マスで補正」を使います。"
+        : "まずデルタ解析を押します。ずれた時だけ、左上1マスで盤面を補正します。";
     }
   }
   if (advanced) advanced.hidden = !state.referenceImage.advanced;
@@ -352,7 +352,7 @@ function renderReferenceImage() {
 async function autoAnalyze() {
   if (!state.referenceImage.src) {
     $("statusBox").className = "status error";
-    $("statusBox").textContent = "先に画像を開いてください。";
+    $("statusBox").textContent = "先にスクショを読み込んでください。";
     return;
   }
   clearAnalysisReport();
@@ -363,11 +363,11 @@ async function autoAnalyze() {
   }
   if (!state.referenceImage.boardRect) {
     $("statusBox").className = "status";
-    $("statusBox").textContent = "OpenCV.jsを確認して、盤面グリッドを探しています...";
+    $("statusBox").textContent = "デルタが盤面の黄色い枠を探しています。";
     const found = await autoDetectBoardGrid();
     if (!found.ok) {
       $("statusBox").className = "status error";
-      $("statusBox").textContent = found.message || "盤面グリッドを自動検出できませんでした。詳細から盤面範囲を指定してください。";
+      $("statusBox").textContent = found.message || "盤面を見つけられませんでした。スクショ内の黄色い枠が見えているか確認してください。";
       state.referenceImage.advanced = true;
       renderReferenceImage();
       return;
@@ -385,7 +385,7 @@ async function autoAnalyze() {
   if (!inferred.ok) {
     state.solutions = [];
     $("statusBox").className = "status error";
-    $("statusBox").textContent = `${inferred.message}${state.referenceImage.manualBoardRect ? "" : " 盤面が自動候補のままなので、次は「左上1マス」で盤面を確定してから再解析するのがおすすめです。"}`;
+    $("statusBox").textContent = `${inferred.message}${state.referenceImage.manualBoardRect ? "" : " 黄色い枠がずれている時は、左上1マスで補正してからもう一度デルタ解析してください。"}`;
     renderSolution();
     return;
   }
@@ -401,22 +401,22 @@ async function autoDetectBoardGrid() {
     if (cvResult.ok) return cvResult;
     const fallback = autoDetectBoardGridLegacy();
     if (fallback.ok) {
-      fallback.message = `OpenCV検出は失敗しましたが、簡易検出で盤面候補を採用しました。OpenCV詳細: ${cvResult.message}`;
+      fallback.message = "盤面候補を見つけました。黄色い枠が合っているか確認してください。";
       return fallback;
     }
     return {
       ok: false,
-      message: `OpenCV検出と簡易検出の両方が失敗しました。OpenCV詳細: ${cvResult.message} / 簡易詳細: ${fallback.message}`,
+      message: "盤面を見つけられませんでした。黄色い枠が見えるスクショか、盤面サイズが合っているか確認してください。",
     };
   }
   const fallback = autoDetectBoardGridLegacy();
   if (fallback.ok) {
-    fallback.message = `OpenCV.jsの読み込みが間に合わなかったため、簡易検出で盤面候補を採用しました。`;
+    fallback.message = "盤面候補を見つけました。黄色い枠が合っているか確認してください。";
     return fallback;
   }
   return {
     ok: false,
-    message: `OpenCV.jsを読み込めませんでした。ネット接続またはCDN読み込みを確認してください。簡易検出も失敗しました: ${fallback.message}`,
+    message: "盤面を見つけられませんでした。黄色い枠が見えるスクショか、盤面サイズが合っているか確認してください。",
   };
 }
 
@@ -511,7 +511,7 @@ function detectBoardGridWithOpenCv() {
     if (!candidates.length) {
       return {
         ok: false,
-        message: `盤面候補を作れませんでした。Hough線 ${lines.rows} 本 / Hough縦 ${lineResult.houghXLines.length} 本 / Hough横 ${lineResult.houghYLines.length} 本 / 統合縦 ${lineResult.xLines.length} 本 / 統合横 ${lineResult.yLines.length} 本 / 暗色候補 ${textureCandidates.length} 件。盤面サイズ設定、または画像内の盤面領域の見え方を確認してください。`,
+        message: "盤面候補を作れませんでした。黄色い枠がはっきり見えるスクショか、盤面サイズが合っているか確認してください。",
       };
     }
     const best = candidates[0];
@@ -534,10 +534,10 @@ function detectBoardGridWithOpenCv() {
     ];
     renderReferenceImage();
     $("statusBox").className = "status";
-    $("statusBox").textContent = `OpenCVで盤面候補を採用しました。方式 ${refinedBest.source} / グリッド ${gridFit.confidence} / Hough線 ${lines.rows} 本 / Hough縦 ${lineResult.houghXLines.length} 本 / Hough横 ${lineResult.houghYLines.length} 本 / 統合縦 ${lineResult.xLines.length} 本 / 統合横 ${lineResult.yLines.length} 本 / 暗色候補 ${textureCandidates.length} 件 / 採用スコア ${refinedBest.score.toFixed(2)}。上位候補: ${candidateSummary([refinedBest, ...candidates.filter((candidate) => candidate !== best).slice(0, 2)])}`;
-    return { ok: true, message: "OpenCV検出成功" };
+    $("statusBox").textContent = "盤面候補を見つけました。黄色い枠が合っていれば、そのまま進めます。";
+    return { ok: true, message: "盤面候補を見つけました。" };
   } catch (error) {
-    return { ok: false, message: `OpenCV処理中にエラー: ${error.message || String(error)}` };
+    return { ok: false, message: "盤面を読み取れませんでした。スクショを読み直して、もう一度デルタ解析してください。" };
   } finally {
     for (const mat of [src, rgb, hsv, mask, kernel, closed, edges, lines, lower, upper]) {
       if (mat && typeof mat.delete === "function") mat.delete();
@@ -948,7 +948,7 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
       aspectRatio > 1.6 ||
       cellRatio < 0.55 ||
       cellRatio > 1.8,
-    reasons: reasons.length ? reasons : ["候補"],
+    reasons: reasons.length ? reasons : ["下書き"],
     details: {
       uniformity: 0,
       aspectRatio,
@@ -1084,7 +1084,7 @@ function gridScore(xSet, ySet) {
 }
 
 function autoDetectBoardGridLegacy() {
-  if (!state.imageBitmap) return { ok: false, message: "画像の読み込みがまだ完了していません。少し待ってからもう一度押してください。" };
+  if (!state.imageBitmap) return { ok: false, message: "スクショの読み込みがまだ終わっていません。少し待ってからもう一度押してください。" };
   const canvas = document.createElement("canvas");
   canvas.width = state.imageBitmap.naturalWidth;
   canvas.height = state.imageBitmap.naturalHeight;
@@ -1103,7 +1103,7 @@ function autoDetectBoardGridLegacy() {
   if (greenPixels.length < 120) {
     return {
       ok: false,
-      message: `盤面グリッドを検出できませんでした。黄緑の線候補が少なすぎます。検出ピクセル数: ${greenPixels.length}。画像が暗い、拡大率が低い、または盤面サイズ設定が違う可能性があります。`,
+      message: "盤面の黄色い枠を見つけられませんでした。画像が暗い、盤面が小さい、盤面サイズが違う可能性があります。",
     };
   }
 
@@ -1116,7 +1116,7 @@ function autoDetectBoardGridLegacy() {
   if (!xSet || !ySet) {
     return {
       ok: false,
-      message: `盤面グリッド候補は見つかりましたが、${state.board.width}x${state.board.height} に合う線セットを作れませんでした。縦線候補 ${xLines.length} 本 / 横線候補 ${yLines.length} 本。盤面サイズ設定、または画像内のグリッド線の見え方を確認してください。`,
+      message: `盤面らしい枠は見つかりましたが、${state.board.width} x ${state.board.height} のマス数に合いませんでした。盤面サイズを確認してください。`,
     };
   }
 
@@ -1136,7 +1136,7 @@ function autoDetectBoardGridLegacy() {
   state.referenceImage.debugItems = boardGridLineDebugItems(gridFit.gridX, gridFit.gridY, gridFit.rect);
   renderReferenceImage();
   $("statusBox").className = "status";
-  $("statusBox").textContent = `盤面グリッド候補を検出しました。縦線 ${xSet.length} 本 / 横線 ${ySet.length} 本 / グリッド ${gridFit.confidence}。`;
+  $("statusBox").textContent = "盤面候補を見つけました。黄色い枠が合っているか確認してください。";
   return { ok: true };
 }
 
@@ -1292,8 +1292,8 @@ function handleReferenceClick(event) {
     $("statusBox").className = "status";
     $("statusBox").textContent =
       state.referenceImage.selectionMode === "cell"
-        ? "左上1マスから盤面を確定しました。次は「自動解析」を押してバーとピースを読み直してください。"
-        : "盤面範囲を手動で確定しました。次は「自動解析」を押してバーとピースを読み直してください。";
+        ? "左上1マスで盤面を補正しました。次は「デルタ解析」でバーとピースを読み直してください。"
+        : "盤面範囲を補正しました。次は「デルタ解析」でバーとピースを読み直してください。";
   }
   renderReferenceImage();
 }
@@ -1501,7 +1501,7 @@ function toggleRequirementAxisColorLock(axis, colorId) {
   const box = $("statusBox");
   if (box) {
     box.className = "status";
-    box.textContent = `${colorLabel(colorId)}の${axis === "rows" ? "行条件" : "列条件"}を${nextLocked ? "確定" : "未確定に戻"}しました。条件が合っていそうなら「解く」を押してください。`;
+    box.textContent = `${colorLabel(colorId)}の${axis === "rows" ? "行" : "列"}を${nextLocked ? "ロック" : "未確定に戻"}しました。準備ができたら「RUN PROTOCOL」を押してください。`;
   }
 }
 
@@ -1514,7 +1514,7 @@ function adjustRequirementChip(axis, colorId, index, delta, max) {
   state.inferredRequirementIndex = 0;
   state.solutions = [];
   state.solutionIndex = 0;
-  state.analysis.inferredBars = { ok: false, reason: "locked_adjust", message: "確定バーを変更しました。" };
+  state.analysis.inferredBars = { ok: false, reason: "locked_adjust", message: "ロックしたバーを変更しました。" };
   renderRequirements();
   renderDiagnostics();
   renderBarCandidatePanel();
@@ -1522,7 +1522,7 @@ function adjustRequirementChip(axis, colorId, index, delta, max) {
   const box = $("statusBox");
   if (box) {
     box.className = "status";
-    box.textContent = "バーを確定しました。残りは逆算できます。もう一度「自動解析」または「解く」を押してください。";
+    box.textContent = "このバーをロックしました。準備ができたら「RUN PROTOCOL」を押してください。";
   }
 }
 
@@ -1716,15 +1716,15 @@ function renderDiagnostics() {
   if (state.analysis.inferredBars) {
     const inferred = state.analysis.inferredBars;
     const text = inferred.ok
-      ? `採用候補 ${inferred.adoptedIndex}/${inferred.candidateCount} / 試行 ${inferred.searched} / スコア ${Number(inferred.score || 0).toFixed(1)}`
+      ? `採用 ${inferred.adoptedIndex}/${inferred.candidateCount} / 確認 ${inferred.searched} / スコア ${Number(inferred.score || 0).toFixed(1)}`
       : inferred.solvedCandidateCount
-        ? `解ける候補 ${inferred.solvedCandidateCount} / 候補 ${inferred.candidateCount}`
+        ? `答えあり ${inferred.solvedCandidateCount} / 下書き ${inferred.candidateCount}`
       : inferred.candidateCount
-        ? `候補 ${inferred.candidateCount} / 試行 ${inferred.searched || 0} / ${inferred.reason || "未採用"}`
-        : inferred.message || inferred.reason || "候補なし";
+        ? `下書き ${inferred.candidateCount} / 確認 ${inferred.searched || 0} / ${inferred.reason || "未採用"}`
+        : inferred.message || inferred.reason || "下書きなし";
     rows.push(`
       <div class="diagnostic-row diagnostic-wide ${inferred.ok ? "ok" : "warn"}">
-        <strong>逆算</strong>
+        <strong>バー補完</strong>
         <span>${escapeHtml(text)}</span>
       </div>
     `);
@@ -1734,14 +1734,14 @@ function renderDiagnostics() {
       .map(([colorId, entry]) => {
         const color = colorById(colorId);
         if (!entry.pieces) return null;
-        return `${color?.label || colorId}:${entry.pieces}個/${entry.cells}マス${entry.lowConfidence ? `/怪しい${entry.lowConfidence}` : ""}`;
+        return `${color?.label || colorId}:${entry.pieces}個/${entry.cells}マス${entry.lowConfidence ? `/要確認${entry.lowConfidence}` : ""}`;
       })
       .filter(Boolean)
       .join("、");
     rows.push(`
       <div class="diagnostic-row diagnostic-wide">
         <strong>ピース</strong>
-        <span>カード ${state.analysis.pieces.cardCount} / ${escapeHtml(suspicious || "検出なし")}${state.analysis.pieces.skipped?.length ? ` / 無視 ${state.analysis.pieces.skipped.length}` : ""}</span>
+        <span>カード ${state.analysis.pieces.cardCount} / ${escapeHtml(suspicious || "読み取りなし")}${state.analysis.pieces.skipped?.length ? ` / 読み飛ばし ${state.analysis.pieces.skipped.length}` : ""}</span>
       </div>
     `);
   }
@@ -1960,7 +1960,7 @@ function adjustRequirementCount(axis, colorId, index, delta) {
   renderDiagnostics();
   renderBarCandidatePanel();
   $("statusBox").className = "status";
-  $("statusBox").textContent = "バーを補正しました。条件が合っていそうなら「解く」を押してください。";
+  $("statusBox").textContent = "バーを補正しました。準備ができたら「RUN PROTOCOL」を押してください。";
   renderSolution();
 }
 
@@ -1987,22 +1987,22 @@ function recognitionHealth() {
   if (barBad.length) {
     return {
       ok: false,
-      message: `バー認識が怪しいため、解く前に止めました。${barBad.join("、")}。まず上バー/左バーの読み取り、または盤面グリッド位置を確認してください。`,
+      message: `バーの数字が合っていないようです。${barBad.join("、")}。黄色い枠の位置と、上バー・左バーの数字を見直してください。`,
     };
   }
   if (pieceBad.length) {
     return {
       ok: false,
-      message: `ピース認識が怪しいため、解く前に止めました。${pieceBad.join("、")}。右側カードの形、横棒などの小さいピース、見切れているピースを確認してください。`,
+      message: `ピースの合計がバーの数字と合っていません。${pieceBad.join("、")}。右側カードの形や小さいピースの見落としを確認してください。`,
     };
   }
   if (lowPieces.length) {
     return {
       ok: false,
-      message: `ピース形状の信頼度が低いカードがあります。${lowPieces.join("、")}。検出表示のオレンジ枠を確認して、必要ならピース編集欄で直してください。`,
+      message: `形があいまいなピースがあります。${lowPieces.join("、")}。STEP5で形を見直して、違っていたらマスをクリックして直してください。`,
     };
   }
-  return { ok: true, message: "認識結果は解ける条件を満たしています。" };
+  return { ok: true, message: "デルタ解析の下書きは、そのまま実行できる状態です。" };
 }
 
 function addColor() {
@@ -2058,8 +2058,8 @@ function solvePuzzle() {
     state.solutionIndex = 0;
     $("statusBox").className = "status";
     $("statusBox").textContent = result.solutions.length
-      ? `${result.solutions.length}件見つかりました。探索ノード: ${result.nodes} / ${Math.round(performance.now() - started)}ms`
-      : `解がありません。探索ノード: ${result.nodes}`;
+      ? `答えを ${result.solutions.length} 件見つけました。下の「演算結果」で確認できます。`
+      : "答えが見つかりませんでした。バーの数字、固定マス、ピースの形をもう一度見直してください。";
   } catch (error) {
     state.solutions = [];
     $("statusBox").className = "status error";
@@ -2086,7 +2086,7 @@ function solveSmart() {
   }
   const guide = correctionGuide();
   if (guide.length) {
-    const message = `${inferred.message || "まだ解けるバー条件に届いていません。"} 次は ${guide.join(" / ")} を確認してください。`;
+    const message = `まだ答えまで届いていません。次は ${guide.join(" / ")} を見直してください。`;
     $("statusBox").className = "status error";
     $("statusBox").textContent = message;
     return { ok: false, message };
@@ -2112,14 +2112,14 @@ function solveSmart() {
       note: placementResult.solutions[0].note || "",
     };
     $("statusBox").className = "status";
-    $("statusBox").textContent = `補助探索で配置候補を ${placementResult.solutions.length} 件作りました。バーは候補から自動生成しています。探索ノード ${placementResult.nodes} / ${Math.round(performance.now() - started)}ms`;
+    $("statusBox").textContent = `バーの数字が少し不安なので、ピース配置から答えを ${placementResult.solutions.length} 件作りました。演算結果で合いそうなものを確認してください。`;
     renderRequirements();
     renderSolution();
     renderDiagnostics();
     renderBarCandidatePanel();
     return { ok: true, message: $("statusBox").textContent };
   }
-  const message = `${inferred.message || ""}${placementResult.message ? ` / ${placementResult.message}` : ""}`;
+  const message = "答えが見つかりませんでした。盤面の黄色い枠、バーの数字、ピースの形を順番に見直してください。";
   $("statusBox").className = "status error";
   $("statusBox").textContent = message;
   return { ok: false, message };
@@ -2134,7 +2134,7 @@ function runSolveWithLoading() {
   }
   if (box) {
     box.className = "status loading";
-    box.textContent = "探索中です。ピースや候補が多い場合は時間がかかります...";
+    box.textContent = "デルタが配置を試しています。ピースが多い時は少しだけ待ってね。";
   }
   window.setTimeout(() => {
     try {
@@ -2157,7 +2157,7 @@ function runAutoAnalyzeWithLoading() {
   }
   if (box) {
     box.className = "status loading";
-    box.textContent = "画像を解析中です。盤面を合わせ、固定/置けないマス、バー候補、ピース切り取りを読み取っています...";
+    box.textContent = "スクショを解析中です。盤面、バー、右側のピースを順番に読んでいます。";
   }
   window.setTimeout(() => {
     try {
@@ -2192,7 +2192,7 @@ function solveWithPieceCandidateSets(started = performance.now()) {
       renderBarCandidatePanel();
       renderSolution();
       $("statusBox").className = "status";
-      $("statusBox").textContent = `ピース候補を ${tried} 通り試して解を見つけました。${result.message}`;
+      $("statusBox").textContent = `ピースの読み取りを ${tried} 通り試して、答えを見つけました。演算結果を確認してください。`;
       return { ok: true, message: $("statusBox").textContent };
     }
   }
@@ -2271,7 +2271,7 @@ function solveWithInferredBars() {
         collectAdditionalSolvedRequirementCandidates(attempts, searched, started);
         return {
           ok: true,
-          message: `バーを画像候補とピース総数から逆算しました。候補 ${state.inferredRequirementCandidates.length || 1} 件 / 解 ${state.solutions.length || result.solutions.length}件 / 探索ノード ${result.nodes} / ${Math.round(performance.now() - started)}ms。右のバー候補から切り替えや微修正ができます。`,
+          message: `答えを見つけました。バーの読み取りが足りないところは、ピースの合計からデルタが補っています。演算結果を確認してください。`,
         };
       }
     }
@@ -2295,7 +2295,7 @@ function solveWithInferredBars() {
     if (state.inferredRequirementCandidates.length) applyRequirementsPreservingUsers(state.inferredRequirementCandidates[0].requirements, "inferred");
     return {
       ok: false,
-      message: `バー候補を ${searched} 件試しましたが解が出ませんでした。右のバー候補で近そうな条件を確認し、必要ならバーを直接補正してください。`,
+      message: `答えが見つかりませんでした。バーの数字、ピースの形、置けないマスを見直してから、もう一度「RUN PROTOCOL」を押してください。`,
     };
   } catch (error) {
     state.requirements = originalRequirements;
@@ -2381,7 +2381,7 @@ function solvePlacementsWithoutBars(options = {}) {
     nodes,
     message: ranked.length
       ? ""
-      : `バーなし配置候補が見つかりませんでした。盤面・不可マス・ピースのどれかが合っていない可能性があります。探索ノード ${nodes}`,
+      : "答え候補を作れませんでした。盤面、置けないマス、ピースの形を見直してください。",
   };
 }
 
@@ -2711,7 +2711,7 @@ function inferRequirementsFromPiecesAndBars() {
     if (!rowCandidates.length || !columnCandidates.length) {
       return {
         ok: false,
-        message: `${color.label} のバー候補を作れませんでした。ピース総数 ${pieceTotal} / 固定 ${fixedTotal} / 必要総数 ${total} が、盤面の空きマスや固定マスと合っていない可能性があります。`,
+        message: `${color.label} のバーを補えませんでした。ピース合計、固定マス、空きマスのどれかが合っていない可能性があります。`,
       };
     }
     perColor.push({ color: color.id, rows: rowCandidates, columns: columnCandidates, total });
@@ -3161,8 +3161,8 @@ function detectBoardCells(options = { fixedColors: true }) {
   state.solutions = [];
   $("statusBox").className = "status";
   $("statusBox").textContent = options.fixedColors
-    ? `盤面候補を反映しました。置けないマス ${blockedCount} / 色付き候補 ${fixedCount}。必要に応じて手修正してください。`
-    : `置けないマス候補だけ反映しました。置けないマス ${blockedCount}。完成済み画像を使う場合はこちらが向いています。`;
+    ? `盤面の下書きを反映しました。置けないマス ${blockedCount} / 固定マス ${fixedCount}。違っていたら盤面の微調整で直してください。`
+    : `置けないマスだけ反映しました。置けないマス ${blockedCount}。完成済み画像を読む時に使います。`;
   render();
 }
 
@@ -3540,7 +3540,7 @@ function countStackedBarsInBucket(components, axis, cellSize) {
 function detectPiecesOld() {
   if (!state.imageBitmap || !state.referenceImage.boardRect) {
     $("statusBox").className = "status error";
-    $("statusBox").textContent = "先に画像を読み込み、盤面を検出してください。";
+    $("statusBox").textContent = "先にスクショを読み込み、デルタ解析で盤面を確認してください。";
     return [];
   }
   const canvas = imageToCanvas();
@@ -3587,11 +3587,11 @@ function detectPiecesOld() {
       mirror: false,
     }));
     $("statusBox").className = "status";
-    $("statusBox").textContent = `ピース候補を ${candidates.length} 個反映しました。形が違う場合はピース編集欄で修正してください。`;
+    $("statusBox").textContent = `ピースを ${candidates.length} 個読み取りました。形が違う時はSTEP5で直してください。`;
     render();
   } else {
     $("statusBox").className = "status error";
-    $("statusBox").textContent = "ピース候補を検出できませんでした。右側パネルが画像内に見えているか確認してください。";
+    $("statusBox").textContent = "ピースを読み取れませんでした。右側のピースパネルがスクショに入っているか確認してください。";
     renderReferenceImage();
   }
   return candidates;
@@ -3624,7 +3624,7 @@ function componentToPieceMatrixOld(component, colorId) {
 function detectPieces() {
   if (!state.imageBitmap || !state.referenceImage.boardRect) {
     $("statusBox").className = "status error";
-    $("statusBox").textContent = "先に画像を読み込み、盤面を検出してください。";
+    $("statusBox").textContent = "先にスクショを読み込み、デルタ解析で盤面を確認してください。";
     return [];
   }
   const canvas = imageToCanvas();
@@ -3692,7 +3692,7 @@ function detectPieces() {
     render();
   } else {
     $("statusBox").className = "status error";
-    $("statusBox").textContent = `ピースを検出できませんでした。右側パネルが画像内に見えているか確認してください。カード候補 ${cards.length} 件 / 無視 ${skipped.length} 件。`;
+    $("statusBox").textContent = `ピースを読み取れませんでした。右側のピースパネルがスクショに入っているか確認してください。読み取れそうなカード ${cards.length} 件 / 読み飛ばし ${skipped.length} 件。`;
     renderReferenceImage();
   }
   return candidates;
@@ -4081,12 +4081,12 @@ function pieceDetectionMessage(candidates, cardCount, skipped) {
   const summary = Object.entries(byColor)
     .map(([label, value]) => {
       const shapes = Object.entries(value.shapes).map(([shape, count]) => `${shape}x${count}`).join(" ");
-      const low = value.low ? ` / 怪しい${value.low}個` : "";
+      const low = value.low ? ` / 要確認${value.low}個` : "";
       return `${label}${value.pieces}個/${value.cells}マス${low}（${shapes}）`;
     })
     .join("、");
   const skippedText = skipped.length ? ` 無視したカード: ${skipped.join("、")}。` : "";
-  return `ピース候補を ${candidates.length} 個反映しました。${summary || "色付きピースなし"}。カード候補 ${cardCount} 件。${skippedText}形が違う場合はピース編集欄で修正してください。`;
+  return `ピースを ${candidates.length} 個読み取りました。${summary || "色付きピースなし"}。カード ${cardCount} 件。${skippedText}形が違う時はSTEP5で直してください。`;
 }
 
 function pieceAnalysis(candidates, cardCount, skipped) {
@@ -4323,7 +4323,7 @@ function showBoardCreateFeedback(width, height) {
   const button = $("resizeBtn");
   const feedback = $("boardCreateFeedback");
   button.classList.add("created");
-  feedback.textContent = `盤面 ${width} x ${height} を作成しました。次は STEP 3 自動解析です。`;
+  feedback.textContent = `盤面 ${width} x ${height} をセットしました。次は STEP 3 デルタ解析です。`;
   window.clearTimeout(showBoardCreateFeedback.timer);
   showBoardCreateFeedback.timer = window.setTimeout(() => {
     button.classList.remove("created");
