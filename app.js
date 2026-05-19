@@ -1444,7 +1444,7 @@ function requirementInput(axis, colorId, index) {
   button.type = "button";
   button.className = `req-chip ${requirementSourceClass(source, locked)}`;
   button.style.borderColor = color?.hex || "";
-  button.style.color = color?.hex || "";
+  button.style.setProperty("--req-color", color?.hex || "#fffa00");
   button.textContent = String(value);
   button.title = `${colorLabel(colorId)} ${axis === "rows" ? "行" : "列"} ${index + 1} / ${requirementSourceLabel(source, locked)}。クリックで+1、Shiftクリック/右クリックで-1。触ると確定します。`;
   button.addEventListener("click", (event) => {
@@ -1464,7 +1464,7 @@ function requirementAxisColorLockButton(axis, colorId) {
   button.type = "button";
   button.className = `req-axis-lock ${locked ? "locked" : ""}`;
   button.style.borderColor = color?.hex || "";
-  button.style.color = color?.hex || "";
+  button.style.setProperty("--req-color", color?.hex || "#fffa00");
   button.textContent = `${colorLabel(colorId)}${axis === "rows" ? "行確定" : "列確定"}`;
   button.title = `${colorLabel(colorId)}の${axis === "rows" ? "行条件" : "列条件"}をまとめて${locked ? "未確定に戻す" : "確定する"}`;
   button.addEventListener("click", () => toggleRequirementAxisColorLock(axis, colorId));
