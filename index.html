@@ -31,7 +31,7 @@
         <div>
           <h1>DELTAロボットチューン</h1>
           <p>アークナイツ：エンドフィールドのDELTAロボットのパズルを、画像取り込みから自動で解くことを目的としたツールです。</p>
-          <p class="topbar-subcopy">スクショを読み込んだら、デルタが盤面とピースを読んで、答えまで一緒に走るよ。</p>
+          <p class="topbar-subcopy">スクショから盤面・ピース・バーを読み取り、必要なところだけ手動で直して解を探します。</p>
           <p class="site-disclaimer">非公式ファンツールです。ゲーム公式・権利元とは関係ありません。</p>
         </div>
         <div class="actions">
@@ -65,17 +65,18 @@
               <ol>
                 <li>ゲーム画面のスクショを読み込みます。</li>
                 <li>盤面サイズを合わせて、デルタ解析を押します。</li>
-                <li>黄色い枠・ピース形状・行列条件を確認して、必要なところだけ直します。</li>
+                <li>黄色い枠がずれていたら、左上1マスで補正してからもう一度デルタ解析を押します。</li>
+                <li>ピース形状とバー本数を確認して、必要なところだけ直します。</li>
                 <li>確かな条件をロックして RUN PROTOCOL を押します。</li>
               </ol>
             </div>
             <div>
               <h2>対応画像</h2>
-              <p>パズル盤面、行列条件、ピース一覧が同じスクショ内に写っている画像を想定しています。極端に暗い画像、切り抜きすぎた画像、UIが隠れている画像は読み取りに失敗することがあります。</p>
+              <p>パズル盤面、行列条件、ピース一覧が同じスクショ内に写っている画像を想定しています。極端に暗い画像、切り抜きすぎた画像、UIが隠れている画像は読み取りに失敗することがあります。動作確認はPCブラウザ中心で、スマホ環境は未確認です。</p>
             </div>
             <div>
               <h2>うまく読めない時</h2>
-              <p>盤面サイズを確認し、黄色い枠がずれた時だけ「左上1マスで補正」を使ってください。ピース形状や数字が違う場合は、右側の確認エリアで手動修正できます。</p>
+              <p>盤面サイズを確認し、黄色い枠がずれた時だけ「左上1マスで補正」を使ってください。補正した後は、もう一度デルタ解析を押します。ピース形状や数字が違う場合は、右側の確認エリアで手動修正できます。</p>
             </div>
           </div>
         </details>
@@ -93,7 +94,7 @@
             </div>
             <div>
               <h2>注意事項</h2>
-              <p>解析結果の正確性は保証できません。利用は自己責任でお願いします。このツールは非公式で、ゲーム公式・権利元とは関係ありません。</p>
+              <p>解析結果の正確性は保証できません。スマホでも表示や画像選択はできる場合がありますが、画像確認や盤面補正はPCブラウザ推奨です。このツールは非公式で、ゲーム公式・権利元とは関係ありません。</p>
             </div>
           </div>
         </details>
@@ -103,14 +104,14 @@
         <aside class="panel controls">
           <div class="manual-section">
             <h2>補助チェック</h2>
-            <p>デルタが迷いやすいところだけ、ここでさっと見直します。</p>
+            <p>読み取りがずれやすいところだけ、ここで確認します。</p>
           </div>
 
           <div id="recognitionGuide" class="recognition-guide"></div>
 
           <div class="manual-subsection correction-step">
             <h2>STEP 4 盤面補正</h2>
-            <p class="control-hint">画像上の黄色い枠と、作業場の盤面を見比べてください。枠がずれている時だけ「左上1マスで補正」を使います。自動補正が合っていれば、このSTEPは飛ばして大丈夫です。</p>
+            <p class="control-hint">画像上の黄色い枠と、作業場の盤面を見比べてください。枠がずれている時だけ「左上1マスで補正」を使います。補正した後は、もう一度 STEP 3 デルタ解析を押してください。自動補正が合っていれば、このSTEPは飛ばして大丈夫です。</p>
             <button id="selectCellBtn">左上1マスで補正</button>
           </div>
 
@@ -121,7 +122,7 @@
 
           <div class="manual-subsection">
             <h2>色</h2>
-            <p class="control-hint">ピース色が違う時はここで調整します。デルタは登録された色を手がかりに、右側のピースを読み取ります。</p>
+            <p class="control-hint">ピース色が違う時はここで調整します。登録された色を手がかりに、右側のピースを読み取ります。</p>
             <div id="colorList" class="color-list"></div>
             <button id="addColorBtn">色を追加</button>
           </div>
@@ -152,7 +153,7 @@
                   <div id="boardCreateFeedback" class="board-create-feedback" aria-live="polite"></div>
                 </div>
                 <button id="autoAnalyzeInlineBtn" class="primary">STEP 3 デルタ解析</button>
-                <span class="auto-analyze-note">スクショを読んで、盤面・バー・ピースをまとめて下書きするよ</span>
+                <span class="auto-analyze-note">スクショから盤面・バー・ピースをまとめて下書きします</span>
                 <label class="mode-control bar-mode-control" hidden>
                   バー表示
                   <select id="barModeSelect">
@@ -204,7 +205,7 @@
               <div class="flow-step">
                 <strong>4</strong>
                 <span>枠チェック</span>
-                <small>黄色い枠がずれた時だけ左上1マスで補正</small>
+                <small>ずれていたら左上1マスで補正してSTEP 3へ戻る</small>
               </div>
               <div class="flow-step">
                 <strong>5</strong>
@@ -218,7 +219,7 @@
               </div>
             </div>
 
-            <div id="referenceHint" class="reference-hint">まずスクショを読み込みます。デルタ解析のあと、黄色い枠が盤面に合っていれば、そのままピース確認へ進めます。</div>
+            <div id="referenceHint" class="reference-hint">まずスクショを読み込みます。デルタ解析のあと、黄色い枠がずれていたら左上1マスで補正し、もう一度デルタ解析を押してください。枠が合っていれば、そのままピース確認へ進めます。</div>
             <div id="libraryNotice" class="library-notice" hidden></div>
             <details class="test-steps dev-only">
               <summary>確認手順</summary>
@@ -226,7 +227,7 @@
                 <li>盤面サイズを実際のマス数に合わせます。</li>
                 <li>「スクショ読込」で画像を読み込みます。</li>
                 <li>盤面がずれた場合だけ「左上1マス」または「盤面範囲」で補正します。</li>
-                <li>「デルタ解析」で盤面・ピース・バーの下書きを反映します。</li>
+                <li>補正した場合は、もう一度「デルタ解析」で盤面・ピース・バーの下書きを反映します。</li>
                 <li>必要なバーだけロックして「RUN PROTOCOL」を押します。</li>
               </ol>
             </details>
@@ -256,7 +257,7 @@
                 <button id="solveMainBtn" class="primary solve-main-button">RUN PROTOCOL</button>
                 <div id="statusBox" class="status">待機中</div>
                 <div class="solve-note">
-                  確かな行・列だけロックしてから実行します。0や最大値に近い行・列、固定マスがある行・列から固めると、デルタが答えを探しやすくなります。自信のない数字は未確定のままで大丈夫です。
+                  確かな行・列だけロックしてから実行します。0や最大値に近い行・列、固定マスがある行・列から固めると、答えを絞りやすくなります。自信のない数字は未確定のままで大丈夫です。
                 </div>
                 <div class="manual-subsection board-tools-panel">
                   <h2>盤面の微調整</h2>
@@ -282,7 +283,7 @@
             <div class="section-head">
               <div>
                 <h2>STEP 5 ピース確認</h2>
-                <p>デルタの切り取り候補を確認します。形が違うピースは、マスをクリックして直してください。</p>
+                <p>切り取り候補を確認します。形が違うピースは、マスをクリックして直してください。</p>
               </div>
               <button id="addPieceBtn">ピースを追加</button>
             </div>

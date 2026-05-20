@@ -165,8 +165,8 @@ function render() {
 function boardAssistSuggestion() {
   if (!state.referenceImage.src) return "スクショを読み込むと、デルタ解析を始められます。";
   if (!state.referenceImage.boardRect) return "まずデルタ解析を押します。黄色い枠がずれた時だけ、左上1マスで補正してください。";
-  if (state.referenceImage.manualBoardRect) return "盤面は補正済みです。もう一度デルタ解析を押すと、バーとピースを読み直します。";
-  return "黄色い枠が盤面に合っていれば、そのままピース確認へ進めます。ずれていたら左上1マスで補正します。";
+  if (state.referenceImage.manualBoardRect) return "盤面は補正済みです。次にもう一度デルタ解析を押して、バーとピースを読み直してください。";
+  return "黄色い枠が盤面に合っていれば、そのままピース確認へ進めます。ずれていたら左上1マスで補正し、もう一度デルタ解析を押してください。";
 }
 
 function renderRecognitionGuide() {
@@ -339,8 +339,8 @@ function renderReferenceImage() {
     if (!state.referenceImage.selecting) {
       hint.textContent = state.referenceImage.boardRect
         ? state.referenceImage.manualBoardRect
-          ? "盤面は補正済みです。ずれていなければデルタ解析でバーとピースを読み直します。"
-          : "黄色い枠が盤面に合っていればOKです。ずれている時だけ「左上1マスで補正」を使います。"
+          ? "盤面は補正済みです。次にもう一度デルタ解析を押して、バーとピースを読み直してください。"
+          : "黄色い枠が盤面に合っていればOKです。ずれている時だけ「左上1マスで補正」を使い、もう一度デルタ解析を押してください。"
         : "まずデルタ解析を押します。ずれた時だけ、左上1マスで盤面を補正します。";
     }
   }
@@ -364,7 +364,7 @@ async function autoAnalyze() {
   }
   if (!state.referenceImage.boardRect) {
     $("statusBox").className = "status";
-    $("statusBox").textContent = "デルタが盤面の黄色い枠を探しています。";
+    $("statusBox").textContent = "盤面の黄色い枠を探しています。";
     const found = await autoDetectBoardGrid();
     if (!found.ok) {
       $("statusBox").className = "status error";
@@ -2156,7 +2156,7 @@ function runSolveWithLoading() {
   }
   if (box) {
     box.className = "status loading";
-    box.textContent = "デルタが配置を試しています。ピースが多い時は少しだけ待ってね。";
+    box.textContent = "配置を試しています。ピースが多い時は少しだけ待ってください。";
   }
   window.setTimeout(() => {
     try {
@@ -2293,7 +2293,7 @@ function solveWithInferredBars() {
         collectAdditionalSolvedRequirementCandidates(attempts, searched, started);
         return {
           ok: true,
-          message: `答えを見つけました。バーの読み取りが足りないところは、ピースの合計からデルタが補っています。演算結果を確認してください。`,
+          message: `答えを見つけました。バーの読み取りが足りないところは、ピースの合計から不足分を補っています。演算結果を確認してください。`,
         };
       }
     }
