@@ -66,4 +66,6 @@ Issues: https://github.com/ofoblivion223-dotcom/arkpazle/issues
 
 ## License
 
-ライセンスは未定です。現時点では、コード・デザイン・同梱ファイルの無断再配布や商用利用はご遠慮ください。
+All rights reserved.
+
+This repository is published for reference and issue tracking. Redistribution, sublicensing, or commercial use of the code, design, or bundled assets is not permitted without permission.
