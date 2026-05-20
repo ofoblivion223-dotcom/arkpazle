@@ -1,0 +1,14 @@
+# Local/editor files
+.DS_Store
+Thumbs.db
+*.log
+
+# Dependency/build output, if tooling is added later
+node_modules/
+dist/
+build/
+.cache/
+
+# Local environment files
+.env
+.env.*

@@ -3,7 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DELTAロボットチューン</title>
+    <title>DELTAロボットチューン | アークナイツ：エンドフィールド 非公式パズルソルバー</title>
+    <meta name="description" content="アークナイツ：エンドフィールドのDELTAロボットパズルを、スクリーンショットから解析して解く非公式ファンツールです。画像はブラウザ内で処理します。" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://arkpazle.pages.dev/" />
+    <meta property="og:title" content="DELTAロボットチューン" />
+    <meta property="og:description" content="アークナイツ：エンドフィールドのDELTAロボットパズルを、スクリーンショットから解析して解く非公式ファンツールです。" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://arkpazle.pages.dev/" />
+    <meta property="og:site_name" content="DELTAロボットチューン" />
+    <meta property="og:locale" content="ja_JP" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="DELTAロボットチューン" />
+    <meta name="twitter:description" content="アークナイツ：エンドフィールドのDELTAロボットパズルを、スクショから解析して解く非公式ファンツールです。" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=Roboto+Condensed:wght@400;700&display=swap" rel="stylesheet" />
@@ -14,7 +26,9 @@
       <header class="topbar">
         <div>
           <h1>DELTAロボットチューン</h1>
-          <p>スクショを読み込んだら、デルタが盤面とピースを読んで、答えまで一緒に走るよ。</p>
+          <p>アークナイツ：エンドフィールドのDELTAロボットのパズルを、画像取り込みから自動で解くことを目的としたツールです。</p>
+          <p class="topbar-subcopy">スクショを読み込んだら、デルタが盤面とピースを読んで、答えまで一緒に走るよ。</p>
+          <p class="site-disclaimer">非公式ファンツールです。ゲーム公式・権利元とは関係ありません。</p>
         </div>
         <div class="actions">
           <button id="autoAnalyzeBtn" class="primary dev-only">自動解析</button>
@@ -36,6 +50,50 @@
           </filter>
         </defs>
       </svg>
+
+      <section class="public-info" aria-label="公開情報">
+        <details class="info-card" open>
+          <summary>はじめて使う人へ</summary>
+          <div class="info-grid">
+            <div>
+              <h2>使い方</h2>
+              <p>DELTAロボットのパズル画面をスクショで読み込み、盤面・ピース・行列条件を下書きして解を探します。</p>
+              <ol>
+                <li>ゲーム画面のスクショを読み込みます。</li>
+                <li>盤面サイズを合わせて、デルタ解析を押します。</li>
+                <li>黄色い枠・ピース形状・行列条件を確認して、必要なところだけ直します。</li>
+                <li>確かな条件をロックして RUN PROTOCOL を押します。</li>
+              </ol>
+            </div>
+            <div>
+              <h2>対応画像</h2>
+              <p>パズル盤面、行列条件、ピース一覧が同じスクショ内に写っている画像を想定しています。極端に暗い画像、切り抜きすぎた画像、UIが隠れている画像は読み取りに失敗することがあります。</p>
+            </div>
+            <div>
+              <h2>うまく読めない時</h2>
+              <p>盤面サイズを確認し、黄色い枠がずれた時だけ「左上1マスで補正」を使ってください。ピース形状や数字が違う場合は、右側の確認エリアで手動修正できます。</p>
+            </div>
+          </div>
+        </details>
+
+        <details class="info-card">
+          <summary>プライバシー・免責</summary>
+          <div class="info-grid">
+            <div>
+              <h2>画像の扱い</h2>
+              <p>読み込んだ画像はブラウザ内で処理します。このサイト側のサーバーへ画像をアップロードする機能はありません。</p>
+            </div>
+            <div>
+              <h2>保存される情報</h2>
+              <p>盤面やピースの作業状態は、続きから作業できるようにブラウザの localStorage に保存されます。初期化すると保存状態も削除されます。</p>
+            </div>
+            <div>
+              <h2>注意事項</h2>
+              <p>解析結果の正確性は保証できません。利用は自己責任でお願いします。このツールは非公式で、ゲーム公式・権利元とは関係ありません。</p>
+            </div>
+          </div>
+        </details>
+      </section>
 
       <section class="layout">
         <aside class="panel controls">
@@ -157,6 +215,7 @@
             </div>
 
             <div id="referenceHint" class="reference-hint">まずスクショを読み込みます。デルタ解析のあと、黄色い枠が盤面に合っていれば、そのままピース確認へ進めます。</div>
+            <div id="libraryNotice" class="library-notice" hidden></div>
             <details class="test-steps dev-only">
               <summary>確認手順</summary>
               <ol>
@@ -243,9 +302,14 @@
           </section>
         </aside>
       </section>
+
+      <footer class="site-footer">
+        <p>DELTAロボットチューンは非公式ファンツールです。ゲーム公式・権利元とは関係ありません。</p>
+        <p>不具合報告・改善要望は <a href="https://github.com/ofoblivion223-dotcom/arkpazle/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a> へお願いします。</p>
+      </footer>
     </main>
 
-    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+    <script async id="opencvScript" src="https://docs.opencv.org/4.x/opencv.js" onerror="window.__opencvLoadFailed = true"></script>
     <script src="./app.js"></script>
   </body>
 </html>

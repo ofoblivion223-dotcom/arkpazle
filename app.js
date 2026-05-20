@@ -355,6 +355,7 @@ async function autoAnalyze() {
     $("statusBox").textContent = "先にスクショを読み込んでください。";
     return;
   }
+  renderExternalLibraryNotice();
   clearAnalysisReport();
   if (!state.referenceImage.manualBoardRect) {
     state.referenceImage.boardRect = null;
@@ -411,12 +412,16 @@ async function autoDetectBoardGrid() {
   }
   const fallback = autoDetectBoardGridLegacy();
   if (fallback.ok) {
-    fallback.message = "盤面候補を見つけました。黄色い枠が合っているか確認してください。";
+    fallback.message = cvStatus.reason === "load-failed"
+      ? "OpenCV.jsを読み込めなかったため、簡易解析で盤面候補を見つけました。黄色い枠が合っているか必ず確認してください。"
+      : "盤面候補を見つけました。黄色い枠が合っているか確認してください。";
     return fallback;
   }
   return {
     ok: false,
-    message: "盤面を見つけられませんでした。黄色い枠が見えるスクショか、盤面サイズが合っているか確認してください。",
+    message: cvStatus.reason === "load-failed"
+      ? "OpenCV.jsを読み込めなかったため、画像解析の精度が下がっています。ネットワークを確認するか、黄色い枠がはっきり見えるスクショで試してください。"
+      : "盤面を見つけられませんでした。黄色い枠が見えるスクショか、盤面サイズが合っているか確認してください。",
   };
 }
 
@@ -424,6 +429,11 @@ function waitForOpenCv(timeoutMs = 3500) {
   const started = performance.now();
   return new Promise((resolve) => {
     const tick = () => {
+      if (window.__opencvLoadFailed) {
+        state.analysis.cvReady = false;
+        resolve({ ok: false, reason: "load-failed" });
+        return;
+      }
       if (window.cv && cv.Mat) {
         if (cv.getBuildInformation) {
           state.analysis.cvReady = true;
@@ -444,13 +454,25 @@ function waitForOpenCv(timeoutMs = 3500) {
         return;
       }
       if (performance.now() - started > timeoutMs) {
-        resolve({ ok: false });
+        resolve({ ok: false, reason: "timeout" });
         return;
       }
       setTimeout(tick, 80);
     };
     tick();
   });
+}
+
+function renderExternalLibraryNotice() {
+  const notice = $("libraryNotice");
+  if (!notice) return;
+  if (window.__opencvLoadFailed) {
+    notice.hidden = false;
+    notice.textContent = "画像解析ライブラリを読み込めませんでした。簡易解析で続行しますが、黄色い枠・ピース形状・バー本数をいつもより慎重に確認してください。";
+    return;
+  }
+  notice.hidden = true;
+  notice.textContent = "";
 }
 
 function detectBoardGridWithOpenCv() {
@@ -4361,6 +4383,13 @@ $("nextSolutionBtn").addEventListener("click", () => {
 $("exportBtn").addEventListener("click", exportJson);
 $("importBtn").addEventListener("click", importJson);
 $("imageInput").addEventListener("change", (event) => handleImageFile(event.target.files?.[0]));
+const opencvScript = $("opencvScript");
+if (opencvScript) {
+  opencvScript.addEventListener("error", () => {
+    window.__opencvLoadFailed = true;
+    renderExternalLibraryNotice();
+  });
+}
 $("imageModeSelect").addEventListener("change", () => {
   state.referenceImage.mode = $("imageModeSelect").value;
 });
