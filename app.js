@@ -374,6 +374,7 @@ async function autoAnalyze() {
       return;
     }
   }
+  calibrateColorsFromReferenceImage();
   detectBoardCells({ fixedColors: true });
   detectRequirementBars();
   state.pieces = [];
@@ -538,7 +539,8 @@ function detectBoardGridWithOpenCv() {
     }
     const best = candidates[0];
     const refinedBest = refineBoardRectFromAnchor(best, sourceCtx, canvas.width, canvas.height);
-    const gridFit = fitBoardGridFromBars(sourceCtx, refinedBest.rect);
+    const expandedBest = expandBoardRectFromTexture(refinedBest, sourceCtx, canvas.width, canvas.height);
+    const gridFit = fitBoardGridFromBars(sourceCtx, expandedBest.rect);
     const rect = gridFit.rect;
     state.referenceImage.boardRect = rect;
     state.referenceImage.gridX = gridFit.gridX;
@@ -546,12 +548,12 @@ function detectBoardGridWithOpenCv() {
     state.referenceImage.manualBoardRect = false;
     state.analysis.board = {
       confidence: gridFit.confidence,
-      source: refinedBest.source,
+      source: expandedBest.source,
       notes: gridFit.notes,
     };
     state.referenceImage.debug = true;
     state.referenceImage.debugItems = [
-      ...gridCandidateDebugItems([{ ...refinedBest, rect }, ...candidates.filter((candidate) => candidate !== best).slice(0, 2)]),
+      ...gridCandidateDebugItems([{ ...expandedBest, rect }, ...candidates.filter((candidate) => candidate !== best).slice(0, 2)]),
       ...boardGridLineDebugItems(gridFit.gridX, gridFit.gridY, rect),
     ];
     renderReferenceImage();
@@ -692,12 +694,47 @@ function refineBoardRectFromAnchor(candidate, ctx, imageWidth, imageHeight) {
     const option = scoreRectCandidate(rect, imageWidth, imageHeight, ctx, `${candidate.source}+左上補正`);
     const sizeRatio = width / Math.max(1, base.width);
     const lowerRightEvidence = boardLowerRightEvidence(ctx, rect);
-    const expansionBonus = sizeRatio > 1 ? Math.min(34, (sizeRatio - 1) * 28) : 0;
+    const expansionBonus = sizeRatio > 1 ? Math.min(80, (sizeRatio - 1) * 58) : 0;
     option.score -= expansionBonus;
-    option.score -= lowerRightEvidence * 24;
+    option.score -= lowerRightEvidence * 48;
     option.details.anchorScale = scale;
     option.details.lowerRightEvidence = lowerRightEvidence;
     if (sizeRatio > 1.12) option.reasons.push("左上固定で拡張");
+    if (!option.rejected) options.push(option);
+  }
+
+  return options.sort((a, b) => a.score - b.score)[0];
+}
+
+function expandBoardRectFromTexture(candidate, ctx, imageWidth, imageHeight) {
+  if (!candidate || !candidate.rect || !ctx) return candidate;
+  const base = candidate.rect;
+  const expectedAspect = state.board.width / state.board.height;
+  const baseCell = Math.min(base.width / state.board.width, base.height / state.board.height);
+  const maxCell = Math.min(imageWidth, imageHeight) * 0.22;
+  const options = [candidate];
+
+  for (let scale = 1.05; scale <= 2.8; scale += 0.05) {
+    const cell = baseCell * scale;
+    if (cell > maxCell) continue;
+    const width = cell * state.board.width;
+    const height = width / expectedAspect;
+    if (base.x + width > imageWidth || base.y + height > imageHeight) continue;
+    const rect = { x: base.x, y: base.y, width, height };
+    const features = gridCandidateImageFeatures(ctx, rect);
+    const lowerRightEvidence = boardLowerRightEvidence(ctx, rect);
+    const centerEvidence = boardCenterEvidence(ctx, rect);
+    const option = scoreRectCandidate(rect, imageWidth, imageHeight, ctx, `${candidate.source}+テクスチャ拡張`);
+    const sizeRatio = width / Math.max(1, base.width);
+    if (features.diagonal < 0.055 || lowerRightEvidence < 0.16) continue;
+    if (sizeRatio > 1.55 && lowerRightEvidence < 0.24) continue;
+    option.score -= Math.min(64, (sizeRatio - 1) * 34);
+    option.score -= lowerRightEvidence * 78;
+    option.score -= centerEvidence * 45;
+    option.details.textureExpansionScale = scale;
+    option.details.centerEvidence = centerEvidence;
+    option.details.lowerRightEvidence = lowerRightEvidence;
+    option.reasons.push("盤面継続で拡張");
     if (!option.rejected) options.push(option);
   }
 
@@ -724,6 +761,20 @@ function boardLowerRightEvidence(ctx, rect) {
   );
   return Math.min(1, right.dark + right.diagonal + bottom.dark + bottom.diagonal);
 }
+
+function boardCenterEvidence(ctx, rect) {
+  if (!ctx) return 0;
+  const center = sampleRectFeatures(
+    ctx,
+    rect.x + rect.width * 0.25,
+    rect.y + rect.height * 0.25,
+    rect.width * 0.5,
+    rect.height * 0.5,
+    7,
+  );
+  return Math.min(1, center.diagonal * 1.3 + center.dark * 0.25);
+}
+
 
 function fitBoardGridFromBars(ctx, rect) {
   const fallback = {
@@ -828,14 +879,14 @@ function clusterNumericCenters(values, tolerance) {
 function fitAxisFromObservedCenters(defaultLines, observedCenters, defaultPitch) {
   if (!observedCenters.length) return { lines: null, score: 0, note: "バーなし" };
   const defaultCenters = defaultLines.slice(0, -1).map((line, index) => (line + defaultLines[index + 1]) / 2);
-  const pairs = [];
-  for (const center of observedCenters) {
-    let best = null;
-    defaultCenters.forEach((expected, index) => {
-      const distance = Math.abs(center - expected);
-      if (!best || distance < best.distance) best = { index, center, distance };
-    });
-    if (best && best.distance <= defaultPitch * 0.55) pairs.push(best);
+  let pairs = matchObservedAxisCenters(defaultCenters, observedCenters, defaultPitch, 0);
+  let bestOffset = 0;
+  for (const offset of [-2, -1, 1, 2]) {
+    const shifted = matchObservedAxisCenters(defaultCenters, observedCenters, defaultPitch, offset);
+    if (shifted.length > pairs.length) {
+      pairs = shifted;
+      bestOffset = offset;
+    }
   }
   const grouped = new Map();
   for (const pair of pairs) {
@@ -857,16 +908,32 @@ function fitAxisFromObservedCenters(defaultLines, observedCenters, defaultPitch)
       const ratio = pitch / defaultPitch;
       const candidateLines = Array.from({ length: defaultLines.length }, (_, index) => origin - pitch / 2 + index * pitch);
       const maxShift = Math.max(...candidateLines.map((line, index) => Math.abs(line - defaultLines[index])));
-      if (ratio > 0.88 && ratio < 1.12 && residual < defaultPitch * 0.14 && maxShift <= defaultPitch * 0.25) {
+      if (ratio > 0.82 && ratio < 1.18 && residual < defaultPitch * 0.18 && maxShift <= defaultPitch * 1.25) {
         return {
           lines: candidateLines,
-          score: 2,
-          note: `${uniquePairs.length}列/行で補正`,
+          score: 2 + Math.min(2, uniquePairs.length / 3),
+          note: `${uniquePairs.length}列/行で補正${bestOffset ? ` オフセット${bestOffset}` : ""}`,
         };
       }
     }
   }
   return { lines: null, score: 0, note: "補正不採用" };
+}
+
+function matchObservedAxisCenters(defaultCenters, observedCenters, defaultPitch, offset) {
+  const pairs = [];
+  for (const center of observedCenters) {
+    let best = null;
+    defaultCenters.forEach((expected, index) => {
+      const shiftedIndex = index + offset;
+      if (shiftedIndex < 0 || shiftedIndex >= defaultCenters.length) return;
+      const shiftedExpected = expected + offset * defaultPitch;
+      const distance = Math.abs(center - shiftedExpected);
+      if (!best || distance < best.distance) best = { index: shiftedIndex, center, distance };
+    });
+    if (best && best.distance <= defaultPitch * 0.62) pairs.push(best);
+  }
+  return pairs;
 }
 
 function buildGridCandidates(xLines, yLines, imageWidth, imageHeight, ctx) {
@@ -914,7 +981,7 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
   const cellW = rect.width / state.board.width;
   const cellH = rect.height / state.board.height;
   const cellRatio = cellW / Math.max(1, cellH);
-  const features = ctx ? gridCandidateImageFeatures(ctx, rect) : { texture: 0, pieceColor: 0, barEvidence: 0 };
+  const features = ctx ? gridCandidateImageFeatures(ctx, rect) : { texture: 0, dark: 0, diagonal: 0, pieceColor: 0, barEvidence: 0, barPixelScore: 0 };
   const aspectPenalty = Math.abs(actualAspect - expectedAspect) * 45;
   const wideAspectPenalty = aspectRatio > 1.35 ? (aspectRatio - 1.35) * 180 : 0;
   const cellRatioPenalty = cellRatio < 0.75 || cellRatio > 1.35 ? Math.abs(Math.log(cellRatio)) * 160 : 0;
@@ -924,10 +991,12 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
   const tinyCellPenalty = Math.min(rect.width / state.board.width, rect.height / state.board.height) < 18 ? 70 : 0;
   const imageRelativeCellPenalty = Math.min(cellW, cellH) < Math.min(imageWidth, imageHeight) * 0.035 ? 95 : 0;
   const hugeWidthPenalty = rect.width > imageWidth * 0.55 ? 45 : 0;
-  const texturePenalty = features.texture < 0.16 ? (0.16 - features.texture) * 220 : -Math.min(28, features.texture * 60);
+  const texturePenalty = features.texture < 0.16 ? (0.16 - features.texture) * 260 : -Math.min(34, features.texture * 68);
+  const blankGridPenalty = features.dark > 0.42 && features.diagonal < 0.08 ? Math.min(110, (features.dark - features.diagonal) * 150) : 0;
   const pieceColorPenalty = features.pieceColor > 0.08 ? features.pieceColor * 360 : 0;
   const noBarEvidencePenalty = features.barEvidence < 0.035 ? 45 : 0;
   const barEvidenceBonus = -Math.min(22, features.barEvidence * 80);
+  const barPixelBonus = -Math.min(64, features.barPixelScore * 0.9);
   const upperLeftBonus = (rect.x / imageWidth) * 12 + (rect.y / imageHeight) * 8;
   if (wideAspectPenalty) reasons.push("横長");
   if (cellRatioPenalty) reasons.push("セル比率異常");
@@ -938,6 +1007,7 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
   if (imageRelativeCellPenalty) reasons.push("セルが画像比で小さい");
   if (hugeWidthPenalty) reasons.push("横に広すぎ");
   if (texturePenalty > 0) reasons.push("盤面テクスチャ不足");
+  if (blankGridPenalty) reasons.push("空白グリッド寄り");
   if (pieceColorPenalty) reasons.push("右側ピース混入");
   if (noBarEvidencePenalty) reasons.push("バー周辺証拠なし");
   if (features.barEvidence > 0.08) reasons.push("バー周辺証拠あり");
@@ -952,9 +1022,11 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
     imageRelativeCellPenalty +
     hugeWidthPenalty +
     texturePenalty +
+    blankGridPenalty +
     pieceColorPenalty +
     noBarEvidencePenalty +
     barEvidenceBonus +
+    barPixelBonus +
     upperLeftBonus;
   return {
     source,
@@ -976,8 +1048,11 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
       aspectRatio,
       cellRatio,
       texture: features.texture,
+      dark: features.dark,
+      diagonal: features.diagonal,
       pieceColor: features.pieceColor,
       barEvidence: features.barEvidence,
+      barPixelScore: features.barPixelScore,
     },
   };
 }
@@ -988,14 +1063,19 @@ function lineSetFromRect(start, length, cellCount) {
 
 function gridCandidateImageFeatures(ctx, rect) {
   const inner = sampleRectFeatures(ctx, rect.x, rect.y, rect.width, rect.height, 8);
-  const cellLike = inner.dark + inner.diagonal;
+  const cellLike = inner.diagonal * 1.45 + inner.dark * 0.24;
   const texture = Math.min(1, cellLike);
   const top = sampleRectFeatures(ctx, rect.x, Math.max(0, rect.y - rect.height * 0.22), rect.width, rect.height * 0.2, 5);
   const left = sampleRectFeatures(ctx, Math.max(0, rect.x - rect.width * 0.22), rect.y, rect.width * 0.2, rect.height, 5);
+  const cellSize = Math.max(1, Math.min(rect.width / state.board.width, rect.height / state.board.height));
+  const barPixelScore = ((top.pieceColor * rect.width * rect.height * 0.2) + (left.pieceColor * rect.width * 0.2 * rect.height)) / (cellSize * cellSize);
   return {
     texture,
+    dark: inner.dark,
+    diagonal: inner.diagonal,
     pieceColor: inner.pieceColor,
     barEvidence: top.pieceColor + left.pieceColor,
+    barPixelScore,
   };
 }
 
@@ -1026,9 +1106,18 @@ function sampleRectFeatures(ctx, x, y, width, height, stepCount) {
 }
 
 function isPuzzleColorHsv(hsv) {
-  const isGreen = hsv.h >= 62 && hsv.h <= 100 && hsv.s > 0.35 && hsv.v > 0.25;
-  const isBlue = hsv.h >= 185 && hsv.h <= 220 && hsv.s > 0.30 && hsv.v > 0.25;
-  return isGreen || isBlue;
+  if (hsv.s <= 0.30 || hsv.v <= 0.25) return false;
+  const matchesRegistered = state.colors.some((color) => {
+    const rgb = hexToRgb(color.hex);
+    const target = rgbToHsv(rgb.r, rgb.g, rgb.b);
+    const hueDistance = Math.min(Math.abs(hsv.h - target.h), 360 - Math.abs(hsv.h - target.h));
+    return hueDistance < 38;
+  });
+  const isCyan = hsv.h >= 170 && hsv.h <= 205;
+  const isOrange = hsv.h >= 24 && hsv.h <= 42;
+  const isGreen = hsv.h >= 62 && hsv.h <= 100;
+  const isBlue = hsv.h >= 185 && hsv.h <= 220;
+  return matchesRegistered || isCyan || isOrange || isGreen || isBlue;
 }
 
 function gridCandidateDebugItems(candidates) {
@@ -3720,6 +3809,129 @@ function detectPieces() {
   return candidates;
 }
 
+function calibrateColorsFromReferenceImage() {
+  if (!state.imageBitmap || !state.referenceImage.boardRect || !state.colors.length) return { ok: false, message: "画像または盤面範囲がありません。" };
+  const canvas = imageToCanvas();
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const grid = currentBoardGrid();
+  const rect = grid.rect;
+  const cellW = averageCellSize(grid.gridX);
+  const cellH = averageCellSize(grid.gridY);
+  const regions = [
+    {
+      x: Math.max(0, rect.x - cellW * 1.2),
+      y: Math.max(0, rect.y - cellH * 1.25),
+      width: rect.width + cellW * 1.6,
+      height: rect.height + cellH * 1.4,
+    },
+    detectPiecePanelRegion(canvas, ctx),
+  ];
+  const samples = collectVividColorSamples(ctx, regions);
+  const clusters = clusterColorSamples(samples, Math.max(2, state.colors.length + 2));
+  if (!clusters.length) return { ok: false, message: "画像から色候補を拾えませんでした。" };
+
+  let changed = 0;
+  let renamed = 0;
+  const used = new Set();
+  for (const color of state.colors) {
+    const baseRgb = hexToRgb(color.hex);
+    const base = rgbToHsv(baseRgb.r, baseRgb.g, baseRgb.b);
+    let best = null;
+    for (let index = 0; index < clusters.length; index++) {
+      if (used.has(index)) continue;
+      const candidate = clusters[index];
+      const hueDistance = Math.min(Math.abs(candidate.h - base.h), 360 - Math.abs(candidate.h - base.h)) / 180;
+      const score = hueDistance * 2.4 + Math.abs(candidate.s - base.s) * 0.8 + Math.abs(candidate.v - base.v) * 0.25 - Math.min(0.25, candidate.count / 1200);
+      if (!best || score < best.score) best = { index, candidate, score };
+    }
+    if (best && best.score < 0.95) {
+      used.add(best.index);
+      const nextHex = rgbToHex(best.candidate.r, best.candidate.g, best.candidate.b);
+      if (nextHex.toLowerCase() !== color.hex.toLowerCase()) {
+        color.hex = nextHex;
+        changed++;
+      }
+      const nextLabel = colorLabelFromHsv(best.candidate.h);
+      if (nextLabel && color.label !== nextLabel) {
+        color.label = nextLabel;
+        renamed++;
+      }
+    }
+  }
+  if (changed || renamed) {
+    ensureRequirements();
+    renderColors();
+    renderTools();
+    renderPieces();
+  }
+  return {
+    ok: changed > 0 || renamed > 0,
+    message: changed || renamed ? `画像内の実色に ${changed} 色、色名を ${renamed} 件合わせました。` : "色は現在の設定のままです。",
+  };
+}
+
+function collectVividColorSamples(ctx, regions) {
+  const samples = [];
+  for (const region of regions) {
+    const startX = Math.max(0, Math.floor(region.x));
+    const startY = Math.max(0, Math.floor(region.y));
+    const endX = Math.min(ctx.canvas.width, Math.ceil(region.x + region.width));
+    const endY = Math.min(ctx.canvas.height, Math.ceil(region.y + region.height));
+    const step = Math.max(2, Math.floor(Math.min(endX - startX, endY - startY) / 90));
+    for (let y = startY; y < endY; y += step) {
+      for (let x = startX; x < endX; x += step) {
+        const data = ctx.getImageData(x, y, 1, 1).data;
+        const hsv = rgbToHsv(data[0], data[1], data[2]);
+        if (hsv.s < 0.34 || hsv.v < 0.26) continue;
+        if (hsv.h >= 42 && hsv.h <= 65 && hsv.s > 0.55 && hsv.v > 0.55) continue;
+        samples.push({ r: data[0], g: data[1], b: data[2], ...hsv });
+      }
+    }
+  }
+  return samples;
+}
+
+function clusterColorSamples(samples, limit) {
+  const buckets = new Map();
+  for (const sample of samples) {
+    const bucket = Math.round(sample.h / 12) * 12;
+    const keyValue = bucket >= 360 ? 0 : bucket;
+    const entry = buckets.get(keyValue) || { h: 0, s: 0, v: 0, r: 0, g: 0, b: 0, count: 0 };
+    entry.h += sample.h;
+    entry.s += sample.s;
+    entry.v += sample.v;
+    entry.r += sample.r;
+    entry.g += sample.g;
+    entry.b += sample.b;
+    entry.count++;
+    buckets.set(keyValue, entry);
+  }
+  return [...buckets.values()]
+    .filter((entry) => entry.count >= 8)
+    .map((entry) => ({
+      h: entry.h / entry.count,
+      s: entry.s / entry.count,
+      v: entry.v / entry.count,
+      r: Math.round(entry.r / entry.count),
+      g: Math.round(entry.g / entry.count),
+      b: Math.round(entry.b / entry.count),
+      count: entry.count,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+function colorLabelFromHsv(hue) {
+  if (hue >= 15 && hue < 45) return "橙";
+  if (hue >= 45 && hue < 70) return "黄";
+  if (hue >= 70 && hue < 155) return "緑";
+  if (hue >= 155 && hue < 195) return "シアン";
+  if (hue >= 195 && hue < 245) return "青";
+  if (hue >= 245 && hue < 285) return "紫";
+  if (hue >= 285 && hue < 335) return "ピンク";
+  return "赤";
+}
+
 function cropReferenceRegion(ctx, rect) {
   const pad = 4;
   const x = Math.max(0, Math.floor(rect.x - pad));
@@ -4254,6 +4466,10 @@ function hexToRgb(hex) {
     g: parseInt(value.slice(2, 4), 16),
     b: parseInt(value.slice(4, 6), 16),
   };
+}
+
+function rgbToHex(r, g, b) {
+  return `#${[r, g, b].map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0")).join("")}`;
 }
 
 function rgbToHsv(r, g, b) {
