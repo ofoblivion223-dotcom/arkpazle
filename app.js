@@ -33,6 +33,8 @@ const state = {
     lastReport: "",
     cvReady: false,
     board: null,
+    boardCandidates: [],
+    selectedBoardCandidateIndex: 0,
     bars: null,
     pieces: null,
     inferredBars: null,
@@ -157,6 +159,7 @@ function render() {
   renderPieces();
   renderDiagnostics();
   renderReferenceImage();
+  renderBoardCandidatePanel();
   renderSolution();
   renderBarCandidatePanel();
   saveState();
@@ -210,6 +213,8 @@ function guideStateLabel(stateName) {
 
 function clearAnalysisReport() {
   state.analysis.board = null;
+  state.analysis.boardCandidates = [];
+  state.analysis.selectedBoardCandidateIndex = 0;
   state.analysis.bars = null;
   state.analysis.rawBarCandidates = null;
   state.analysis.pieces = null;
@@ -283,6 +288,8 @@ function clearReferenceBoardDetection() {
   state.referenceImage.manualBoardRect = false;
   state.referenceImage.debugItems = [];
   state.referenceImage.debug = false;
+  state.analysis.boardCandidates = [];
+  state.analysis.selectedBoardCandidateIndex = 0;
 }
 
 function setBoardGridFromRect(rect) {
@@ -347,6 +354,7 @@ function renderReferenceImage() {
   if (advanced) advanced.hidden = !state.referenceImage.advanced;
   renderRecognitionGuide();
   renderBoardOverlay();
+  renderBoardCandidatePanel();
 }
 
 async function autoAnalyze() {
@@ -367,7 +375,7 @@ async function autoAnalyze() {
     $("statusBox").textContent = "盤面の黄色い枠を探しています。";
     const found = await autoDetectBoardGrid();
     if (!found.ok) {
-      $("statusBox").className = "status error";
+      $("statusBox").className = found.needsChoice ? "status" : "status error";
       $("statusBox").textContent = found.message || "盤面を見つけられませんでした。スクショ内の黄色い枠が見えているか確認してください。";
       state.referenceImage.advanced = true;
       renderReferenceImage();
@@ -530,7 +538,7 @@ function detectBoardGridWithOpenCv() {
     const sourceCtx = canvas.getContext("2d", { willReadFrequently: true });
     const lineResult = buildLineGridCandidates(vertical, horizontal, mask, canvas, sourceCtx, lines.rows);
     const textureCandidates = buildTextureBoardCandidates(sourceCtx, canvas.width, canvas.height);
-    const candidates = [...textureCandidates, ...lineResult.candidates].sort((a, b) => a.score - b.score);
+    const candidates = buildBoardDetectionCandidates([...textureCandidates, ...lineResult.candidates], sourceCtx, canvas.width, canvas.height);
     if (!candidates.length) {
       return {
         ok: false,
@@ -538,26 +546,20 @@ function detectBoardGridWithOpenCv() {
       };
     }
     const best = candidates[0];
-    const refinedBest = refineBoardRectFromAnchor(best, sourceCtx, canvas.width, canvas.height);
-    const expandedBest = expandBoardRectFromTexture(refinedBest, sourceCtx, canvas.width, canvas.height);
-    const gridFit = fitBoardGridFromBars(sourceCtx, expandedBest.rect);
-    const rect = gridFit.rect;
-    state.referenceImage.boardRect = rect;
-    state.referenceImage.gridX = gridFit.gridX;
-    state.referenceImage.gridY = gridFit.gridY;
-    state.referenceImage.manualBoardRect = false;
-    state.analysis.board = {
-      confidence: gridFit.confidence,
-      source: expandedBest.source,
-      notes: gridFit.notes,
-    };
+    applyBoardCandidate(best, 0);
+    state.analysis.boardCandidates = candidates.slice(0, 5).map(simplifyBoardCandidate);
+    state.analysis.selectedBoardCandidateIndex = 0;
     state.referenceImage.debug = true;
     state.referenceImage.debugItems = [
-      ...gridCandidateDebugItems([{ ...expandedBest, rect }, ...candidates.filter((candidate) => candidate !== best).slice(0, 2)]),
-      ...boardGridLineDebugItems(gridFit.gridX, gridFit.gridY, rect),
+      ...gridCandidateDebugItems(candidates.slice(0, 3)),
+      ...boardGridLineDebugItems(best.gridX, best.gridY, best.rect),
     ];
     renderReferenceImage();
     $("statusBox").className = "status";
+    if (best.confidence === "低") {
+      $("statusBox").textContent = "盤面候補は見つかりましたが信頼度が低いです。黄色い枠を確認し、候補を切り替えるか左上1マスで補正してください。";
+      return { ok: false, needsChoice: true, message: $("statusBox").textContent };
+    }
     $("statusBox").textContent = "盤面候補を見つけました。黄色い枠が合っていれば、そのまま進めます。";
     return { ok: true, message: "盤面候補を見つけました。" };
   } catch (error) {
@@ -649,18 +651,13 @@ function buildTextureBoardCandidates(ctx, imageWidth, imageHeight) {
   const candidates = [];
   const expectedAspect = state.board.width / state.board.height;
   const minSide = Math.min(imageWidth, imageHeight);
-  const minCell = Math.max(24, minSide * 0.04);
-  const maxCell = minSide * 0.16;
-  const likelyBounds = {
-    minX: imageWidth * 0.2,
-    maxX: imageWidth * 0.68,
-    minY: imageHeight * 0.18,
-    maxY: imageHeight * 0.9,
-  };
+  const minCell = Math.max(18, minSide * 0.032);
+  const maxCell = minSide * (state.board.width >= 8 || state.board.height >= 8 ? 0.135 : 0.19);
+  const likelyBounds = boardSearchBounds(imageWidth, imageHeight);
   for (let cell = minCell; cell <= maxCell; cell += Math.max(4, minCell * 0.18)) {
     const width = cell * state.board.width;
     const height = width / expectedAspect;
-    if (height < minCell * state.board.height * 0.75 || height > imageHeight * 0.75) continue;
+    if (height < minCell * state.board.height * 0.75 || height > imageHeight * 0.88) continue;
     const stepX = Math.max(10, cell * 0.5);
     const stepY = Math.max(10, cell * 0.5);
     for (let y = likelyBounds.minY; y <= Math.min(likelyBounds.maxY, imageHeight - height); y += stepY) {
@@ -672,6 +669,16 @@ function buildTextureBoardCandidates(ctx, imageWidth, imageHeight) {
     }
   }
   return candidates.sort((a, b) => a.score - b.score).slice(0, 8);
+}
+
+function boardSearchBounds(imageWidth, imageHeight) {
+  const landscape = imageWidth / Math.max(1, imageHeight) >= 1.45;
+  return {
+    minX: imageWidth * (landscape ? 0.2 : 0.03),
+    maxX: imageWidth * (landscape ? 0.74 : 0.82),
+    minY: imageHeight * 0.08,
+    maxY: imageHeight * 0.9,
+  };
 }
 
 function refineBoardRectFromAnchor(candidate, ctx, imageWidth, imageHeight) {
@@ -741,6 +748,292 @@ function expandBoardRectFromTexture(candidate, ctx, imageWidth, imageHeight) {
   return options.sort((a, b) => a.score - b.score)[0];
 }
 
+function buildBoardDetectionCandidates(baseCandidates, ctx, imageWidth, imageHeight) {
+  const variants = [];
+  const axisCache = new Map();
+  for (const candidate of baseCandidates.sort((a, b) => a.score - b.score).slice(0, 4)) {
+    const refined = refineBoardRectFromAnchor(candidate, ctx, imageWidth, imageHeight);
+    const expanded = expandBoardRectFromTexture(refined, ctx, imageWidth, imageHeight);
+    variants.push(candidate, refined, expanded, refineBoardRectFromEdges(expanded, ctx, imageWidth, imageHeight));
+    variants.push(...buildAxisRecoveryBoardVariants(expanded, ctx, imageWidth, imageHeight, axisCache));
+  }
+  return uniqueBoardCandidates(variants)
+    .map((candidate) => fitAndScoreBoardCandidate(candidate, ctx, imageWidth, imageHeight, axisCache))
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 8);
+}
+
+function uniqueBoardCandidates(candidates) {
+  const unique = new Map();
+  for (const candidate of candidates) {
+    if (!candidate || !candidate.rect || candidate.rejected) continue;
+    const rect = candidate.rect;
+    const keyValue = [
+      Math.round(rect.x / 4),
+      Math.round(rect.y / 4),
+      Math.round(rect.width / 4),
+      Math.round(rect.height / 4),
+    ].join(":");
+    const existing = unique.get(keyValue);
+    if (!existing || candidate.score < existing.score) unique.set(keyValue, candidate);
+  }
+  return [...unique.values()];
+}
+
+function refineBoardRectFromEdges(candidate, ctx, imageWidth, imageHeight) {
+  if (!candidate?.rect || !ctx) return candidate;
+  const base = candidate.rect;
+  const cellW = base.width / state.board.width;
+  const cellH = base.height / state.board.height;
+  const options = [candidate];
+  for (const dx of [-0.35, 0, 0.35]) {
+    for (const dy of [-0.35, 0, 0.35]) {
+      for (const dw of [0, 0.3]) {
+        for (const dh of [0, 0.3]) {
+          if (!dx && !dy && !dw && !dh) continue;
+          const rect = {
+            x: base.x + dx * cellW,
+            y: base.y + dy * cellH,
+            width: base.width + dw * cellW,
+            height: base.height + dh * cellH,
+          };
+          if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > imageWidth || rect.y + rect.height > imageHeight) continue;
+          if (rect.width < cellW * state.board.width * 0.72 || rect.height < cellH * state.board.height * 0.72) continue;
+          const option = scoreRectCandidate(rect, imageWidth, imageHeight, ctx, `${candidate.source}+端補正`);
+          const edgeEvidence = boardEdgeEvidence(ctx, rect);
+          const periodicEvidence = boardGridPeriodicityEvidence(ctx, rect);
+          option.score -= edgeEvidence * 55 + periodicEvidence * 45;
+          option.details.edgeEvidence = edgeEvidence;
+          option.details.periodicEvidence = periodicEvidence;
+          option.reasons.push("端/周期で補正");
+          if (!option.rejected) options.push(option);
+        }
+      }
+    }
+  }
+  return options.sort((a, b) => a.score - b.score)[0];
+}
+
+function buildAxisRecoveryBoardVariants(candidate, ctx, imageWidth, imageHeight, axisCache) {
+  if (!candidate?.rect || !ctx) return [];
+  const baseAxis = cachedBoardRequirementAxisEvidence(ctx, candidate.rect, axisCache);
+  if (baseAxis.topCenters && baseAxis.leftCenters) return [];
+  const base = candidate.rect;
+  const cellW = base.width / state.board.width;
+  const cellH = base.height / state.board.height;
+  const variants = [];
+  const yOffsets = baseAxis.leftCenters && !baseAxis.topCenters ? [-2, -1] : [-1, 1];
+  const xOffsets = baseAxis.topCenters && !baseAxis.leftCenters ? [-1, 1] : [0];
+  for (const yOffset of yOffsets) {
+    for (const xOffset of xOffsets) {
+      const shifted = {
+        x: base.x + xOffset * cellW,
+        y: base.y + yOffset * cellH,
+        width: base.width,
+        height: base.height,
+      };
+      variants.push(...buildAxisRecoveryRectOptions(shifted, baseAxis, candidate, ctx, imageWidth, imageHeight, axisCache, xOffset, yOffset));
+    }
+  }
+  return variants;
+}
+
+function buildAxisRecoveryRectOptions(rect, baseAxis, candidate, ctx, imageWidth, imageHeight, axisCache, xOffset, yOffset) {
+  const options = [];
+  const cell = Math.min(rect.width / state.board.width, rect.height / state.board.height);
+  const rects = [
+    rect,
+    { x: rect.x - cell * 0.5, y: rect.y - cell * 0.5, width: rect.width + cell, height: rect.height + cell },
+    { x: rect.x - cell, y: rect.y, width: rect.width + cell, height: rect.height + cell },
+    { x: rect.x, y: rect.y, width: rect.width + cell, height: rect.height + cell },
+  ];
+  for (const optionRect of rects) {
+    if (optionRect.x < 0 || optionRect.y < 0 || optionRect.x + optionRect.width > imageWidth || optionRect.y + optionRect.height > imageHeight) continue;
+    const axis = cachedBoardRequirementAxisEvidence(ctx, optionRect, axisCache);
+    if (axis.score <= baseAxis.score && !(axis.topCenters && axis.leftCenters)) continue;
+    const option = scoreRectCandidate(optionRect, imageWidth, imageHeight, ctx, `${candidate.source}+軸回復`);
+    option.score -= axis.score * 70;
+    option.details.axisBarEvidence = axis.score;
+    option.details.topBarCenters = axis.topCenters;
+    option.details.leftBarCenters = axis.leftCenters;
+    option.details.axisRecoveryOffsetX = xOffset;
+    option.details.axisRecoveryOffsetY = yOffset;
+    option.details.axisRecoveryExpand = Number(((optionRect.width - rect.width) / Math.max(1, cell)).toFixed(2));
+    option.reasons.push("バー軸回復");
+    if (!option.rejected) options.push(option);
+  }
+  return options;
+}
+
+function fitAndScoreBoardCandidate(candidate, ctx, imageWidth, imageHeight, axisCache) {
+  if (!candidate?.rect) return null;
+  const gridFit = fitBoardGridFromBars(ctx, candidate.rect);
+  const normalizedGridFit = normalizeBoardGridFit(gridFit, candidate.rect);
+  const fitted = scoreRectCandidate(normalizedGridFit.rect, imageWidth, imageHeight, ctx, candidate.source);
+  if (fitted.rejected) return null;
+  const edgeEvidence = boardEdgeEvidence(ctx, normalizedGridFit.rect);
+  const periodicEvidence = boardGridPeriodicityEvidence(ctx, normalizedGridFit.rect);
+  const axisBarEvidence = cachedBoardRequirementAxisEvidence(ctx, normalizedGridFit.rect, axisCache);
+  const blockedEvidence = boardBlockedCellEvidence(ctx, normalizedGridFit.gridX, normalizedGridFit.gridY);
+  fitted.details.edgeEvidence = edgeEvidence;
+  fitted.details.periodicEvidence = periodicEvidence;
+  fitted.details.axisBarEvidence = axisBarEvidence.score;
+  fitted.details.topBarCenters = axisBarEvidence.topCenters;
+  fitted.details.leftBarCenters = axisBarEvidence.leftCenters;
+  fitted.details.blockedEvidence = blockedEvidence;
+  const shiftPenalty = rectDistance(candidate.rect, normalizedGridFit.rect) * 0.18;
+  const confidenceBonus = normalizedGridFit.confidence === "高" ? 28 : normalizedGridFit.confidence === "中" ? 14 : 0;
+  const hasBothAxes = Boolean(axisBarEvidence.topCenters && axisBarEvidence.leftCenters);
+  const noAxisBarsPenalty = axisBarEvidence.topCenters || axisBarEvidence.leftCenters ? 0 : 95;
+  const oneSidedAxisPenalty = hasBothAxes ? 0 : 85;
+  const axisBonus = hasBothAxes ? axisBarEvidence.score * 120 : 0;
+  const blockedPenalty = blockedEvidence < 0.5 ? 24 : 0;
+  const score =
+    candidate.score * 0.74 +
+    fitted.score * 0.26 +
+    shiftPenalty +
+    noAxisBarsPenalty +
+    oneSidedAxisPenalty -
+    confidenceBonus -
+    edgeEvidence * 30 -
+    periodicEvidence * 28 -
+    axisBonus +
+    blockedPenalty;
+  return {
+    ...fitted,
+    source: candidate.source,
+    rect: normalizedGridFit.rect,
+    xSet: normalizedGridFit.gridX,
+    ySet: normalizedGridFit.gridY,
+    gridX: normalizedGridFit.gridX,
+    gridY: normalizedGridFit.gridY,
+    score,
+    confidence: boardCandidateConfidence(score, fitted, normalizedGridFit),
+    notes: normalizedGridFit.notes,
+    details: {
+      ...(candidate.details || {}),
+      ...(fitted.details || {}),
+      rawScore: candidate.score,
+      fittedScore: fitted.score,
+      shiftPenalty,
+      gridFitConfidence: normalizedGridFit.confidence,
+    },
+    reasons: [
+      ...new Set([
+        ...(candidate.reasons || []),
+        ...(fitted.reasons || []),
+        `バー補正${normalizedGridFit.confidence}`,
+        axisBarEvidence.score >= 0.35 ? "周辺バー整列" : "周辺バー不足",
+      ]),
+    ],
+  };
+}
+
+function boardCandidateConfidence(score, candidate, gridFit) {
+  const d = candidate.details || {};
+  if (gridFit.confidence === "高" && score < 70 && d.texture >= 0.18 && d.axisBarEvidence >= 0.35) return "高";
+  if ((gridFit.confidence === "中" || d.edgeEvidence >= 0.18 || d.periodicEvidence >= 0.22 || d.axisBarEvidence >= 0.28) && score < 105) return "中";
+  return "低";
+}
+
+function boardBlockedCellEvidence(ctx, gridX, gridY) {
+  if (!ctx || !gridX || !gridY) return 0;
+  let blocked = 0;
+  for (let y = 0; y < state.board.height; y++) {
+    for (let x = 0; x < state.board.width; x++) {
+      const cx = (gridX[x] + gridX[x + 1]) / 2;
+      const cy = (gridY[y] + gridY[y + 1]) / 2;
+      const radius = Math.max(4, Math.min(gridX[x + 1] - gridX[x], gridY[y + 1] - gridY[y]) * 0.18);
+      if (classifySample(sampleRegion(ctx, cx, cy, radius)) === "blocked") blocked++;
+    }
+  }
+  return blocked;
+}
+
+function normalizeBoardGridFit(gridFit, baseRect) {
+  const notes = gridFit.notes || [];
+  const xFit = !notes.some((note) => note.startsWith("列バー") && (note.includes("バーなし") || note.includes("補正不採用")));
+  const yFit = !notes.some((note) => note.startsWith("行バー") && (note.includes("バーなし") || note.includes("補正不採用")));
+  if (xFit && yFit) {
+    const cellW = gridFit.rect.width / state.board.width;
+    const cellH = gridFit.rect.height / state.board.height;
+    if (cellW / Math.max(1, cellH) >= 0.92 && cellW / Math.max(1, cellH) <= 1.08) return gridFit;
+  }
+
+  const baseCell = Math.min(baseRect.width / state.board.width, baseRect.height / state.board.height);
+  const gridCellX = gridFit.rect.width / state.board.width;
+  const gridCellY = gridFit.rect.height / state.board.height;
+  const cell = xFit && yFit
+    ? (gridCellX + gridCellY) / 2
+    : xFit
+      ? gridCellX
+      : yFit
+        ? gridCellY
+        : baseCell;
+  const width = cell * state.board.width;
+  const height = cell * state.board.height;
+  const rect = {
+    x: xFit ? gridFit.rect.x : baseRect.x,
+    y: yFit ? gridFit.rect.y : baseRect.y,
+    width,
+    height,
+  };
+  return {
+    ...gridFit,
+    rect,
+    gridX: lineSetFromRect(rect.x, rect.width, state.board.width),
+    gridY: lineSetFromRect(rect.y, rect.height, state.board.height),
+    confidence: xFit && yFit ? gridFit.confidence : "低",
+    notes: [...notes, "正方セル維持"],
+  };
+}
+
+function rectDistance(a, b) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.width - b.width) + Math.abs(a.height - b.height);
+}
+
+function applyBoardCandidate(candidate, index = 0) {
+  if (!candidate?.rect) return false;
+  state.referenceImage.boardRect = { ...candidate.rect };
+  state.referenceImage.gridX = (candidate.gridX || candidate.xSet || lineSetFromRect(candidate.rect.x, candidate.rect.width, state.board.width)).slice();
+  state.referenceImage.gridY = (candidate.gridY || candidate.ySet || lineSetFromRect(candidate.rect.y, candidate.rect.height, state.board.height)).slice();
+  state.referenceImage.manualBoardRect = false;
+  state.analysis.selectedBoardCandidateIndex = index;
+  state.analysis.board = {
+    confidence: candidate.confidence || "低",
+    source: candidate.source,
+    score: candidate.score,
+    notes: candidate.notes || [],
+  };
+  return true;
+}
+
+function simplifyBoardCandidate(candidate) {
+  return {
+    source: candidate.source,
+    rect: roundRect(candidate.rect),
+    gridX: (candidate.gridX || candidate.xSet || []).map((value) => Number(value.toFixed(2))),
+    gridY: (candidate.gridY || candidate.ySet || []).map((value) => Number(value.toFixed(2))),
+    xSet: (candidate.xSet || candidate.gridX || []).map((value) => Number(value.toFixed(2))),
+    ySet: (candidate.ySet || candidate.gridY || []).map((value) => Number(value.toFixed(2))),
+    score: Number(candidate.score.toFixed(2)),
+    confidence: candidate.confidence || "低",
+    reasons: candidate.reasons || [],
+    notes: candidate.notes || [],
+    details: Object.fromEntries(Object.entries(candidate.details || {}).map(([keyName, value]) => [keyName, Number.isFinite(value) ? Number(value.toFixed(4)) : value])),
+  };
+}
+
+function roundRect(rect) {
+  return {
+    x: Number(rect.x.toFixed(2)),
+    y: Number(rect.y.toFixed(2)),
+    width: Number(rect.width.toFixed(2)),
+    height: Number(rect.height.toFixed(2)),
+  };
+}
+
 function boardLowerRightEvidence(ctx, rect) {
   if (!ctx) return 0;
   const right = sampleRectFeatures(
@@ -773,6 +1066,102 @@ function boardCenterEvidence(ctx, rect) {
     7,
   );
   return Math.min(1, center.diagonal * 1.3 + center.dark * 0.25);
+}
+
+function boardEdgeEvidence(ctx, rect) {
+  if (!ctx) return 0;
+  const cellW = rect.width / state.board.width;
+  const cellH = rect.height / state.board.height;
+  const samples = [
+    sampleBoardLineEvidence(ctx, rect.x, rect.y, 0, rect.height, Math.max(10, state.board.height * 3)),
+    sampleBoardLineEvidence(ctx, rect.x + rect.width, rect.y, 0, rect.height, Math.max(10, state.board.height * 3)),
+    sampleBoardLineEvidence(ctx, rect.x, rect.y, rect.width, 0, Math.max(10, state.board.width * 3)),
+    sampleBoardLineEvidence(ctx, rect.x, rect.y + rect.height, rect.width, 0, Math.max(10, state.board.width * 3)),
+  ];
+  const inner = sampleRectFeatures(ctx, rect.x + cellW * 0.12, rect.y + cellH * 0.12, rect.width - cellW * 0.24, rect.height - cellH * 0.24, 8);
+  return Math.min(1, average(samples) * 0.82 + inner.diagonal * 0.22);
+}
+
+function boardGridPeriodicityEvidence(ctx, rect) {
+  if (!ctx) return 0;
+  const vertical = [];
+  const horizontal = [];
+  for (let x = 1; x < state.board.width; x++) {
+    vertical.push(sampleBoardLineEvidence(ctx, rect.x + (rect.width / state.board.width) * x, rect.y, 0, rect.height, Math.max(8, state.board.height * 2)));
+  }
+  for (let y = 1; y < state.board.height; y++) {
+    horizontal.push(sampleBoardLineEvidence(ctx, rect.x, rect.y + (rect.height / state.board.height) * y, rect.width, 0, Math.max(8, state.board.width * 2)));
+  }
+  const values = [...vertical, ...horizontal];
+  return values.length ? Math.min(1, average(values)) : 0;
+}
+
+function boardRequirementAxisEvidence(ctx, rect) {
+  if (!ctx) return { score: 0, topCenters: 0, leftCenters: 0 };
+  const gridX = lineSetFromRect(rect.x, rect.width, state.board.width);
+  const gridY = lineSetFromRect(rect.y, rect.height, state.board.height);
+  const cellW = rect.width / state.board.width;
+  const cellH = rect.height / state.board.height;
+  const topRegion = {
+    x: Math.max(0, rect.x - cellW * 0.55),
+    y: Math.max(0, rect.y - cellH * 1.35),
+    width: rect.width + cellW * 1.1,
+    height: Math.max(1, cellH * 1.22),
+  };
+  const leftRegion = {
+    x: Math.max(0, rect.x - cellW * 1.35),
+    y: Math.max(0, rect.y - cellH * 0.55),
+    width: Math.max(1, cellW * 1.22),
+    height: rect.height + cellH * 1.1,
+  };
+  const topCenters = collectRequirementBarCenters(ctx, topRegion, "columns");
+  const leftCenters = collectRequirementBarCenters(ctx, leftRegion, "rows");
+  const xFit = fitAxisFromObservedCenters(gridX, topCenters, cellW);
+  const yFit = fitAxisFromObservedCenters(gridY, leftCenters, cellH);
+  const topCoverage = Math.min(1, topCenters.length / Math.max(2, state.board.width * 0.45));
+  const leftCoverage = Math.min(1, leftCenters.length / Math.max(2, state.board.height * 0.45));
+  const fitScore = Math.min(1, ((xFit.score || 0) + (yFit.score || 0)) / 7);
+  const balancedScore = topCoverage && leftCoverage ? Math.min(topCoverage, leftCoverage) * 0.28 : 0;
+  const score = Math.min(1, topCoverage * 0.24 + leftCoverage * 0.24 + fitScore * 0.38 + balancedScore);
+  return {
+    score,
+    topCenters: topCenters.length,
+    leftCenters: leftCenters.length,
+  };
+}
+
+function cachedBoardRequirementAxisEvidence(ctx, rect, cache) {
+  if (!cache) return boardRequirementAxisEvidence(ctx, rect);
+  const keyValue = [
+    Math.round(rect.x / 3),
+    Math.round(rect.y / 3),
+    Math.round(rect.width / 3),
+    Math.round(rect.height / 3),
+  ].join(":");
+  if (!cache.has(keyValue)) cache.set(keyValue, boardRequirementAxisEvidence(ctx, rect));
+  return cache.get(keyValue);
+}
+
+function sampleBoardLineEvidence(ctx, x, y, dx, dy, steps) {
+  let hits = 0;
+  let total = 0;
+  const count = Math.max(1, Math.round(steps));
+  for (let index = 0; index <= count; index++) {
+    const ratio = index / count;
+    const px = Math.max(0, Math.min(ctx.canvas.width - 1, Math.round(x + dx * ratio)));
+    const py = Math.max(0, Math.min(ctx.canvas.height - 1, Math.round(y + dy * ratio)));
+    const data = ctx.getImageData(px, py, 1, 1).data;
+    const hsv = rgbToHsv(data[0], data[1], data[2]);
+    total++;
+    if (isBoardLineHsv(hsv)) hits++;
+  }
+  return total ? hits / total : 0;
+}
+
+function isBoardLineHsv(hsv) {
+  const yellowLine = hsv.h >= 22 && hsv.h <= 66 && hsv.s > 0.28 && hsv.v > 0.34;
+  const darkLine = hsv.v > 0.18 && hsv.v < 0.56 && hsv.s < 0.42;
+  return yellowLine || darkLine;
 }
 
 
@@ -981,12 +1370,17 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
   const cellW = rect.width / state.board.width;
   const cellH = rect.height / state.board.height;
   const cellRatio = cellW / Math.max(1, cellH);
-  const features = ctx ? gridCandidateImageFeatures(ctx, rect) : { texture: 0, dark: 0, diagonal: 0, pieceColor: 0, barEvidence: 0, barPixelScore: 0 };
+  const features = ctx ? gridCandidateImageFeatures(ctx, rect) : { texture: 0, dark: 0, diagonal: 0, pieceColor: 0, barEvidence: 0, barPixelScore: 0, edgeEvidence: 0, periodicEvidence: 0 };
+  const landscape = imageWidth / Math.max(1, imageHeight) >= 1.45;
+  const normalizedX = rect.x / imageWidth;
+  const normalizedCenterX = (rect.x + rect.width / 2) / imageWidth;
   const aspectPenalty = Math.abs(actualAspect - expectedAspect) * 45;
   const wideAspectPenalty = aspectRatio > 1.35 ? (aspectRatio - 1.35) * 180 : 0;
   const cellRatioPenalty = cellRatio < 0.75 || cellRatio > 1.35 ? Math.abs(Math.log(cellRatio)) * 160 : 0;
-  const rightPenalty = rect.x + rect.width > imageWidth * 0.7 ? 35 : 0;
-  const rightPanelPenalty = rect.x > imageWidth * 0.62 || rect.x + rect.width / 2 > imageWidth * 0.72 ? 160 : 0;
+  const leftHudPenalty = landscape && normalizedX < 0.23 ? (0.23 - normalizedX) * 780 : 0;
+  const centerBandPenalty = landscape && normalizedCenterX < 0.32 ? (0.32 - normalizedCenterX) * 520 : 0;
+  const rightPenalty = rect.x + rect.width > imageWidth * 0.78 ? 22 : 0;
+  const rightPanelPenalty = rect.x > imageWidth * 0.68 || rect.x + rect.width / 2 > imageWidth * 0.78 ? 92 : 0;
   const tooShortPenalty = rect.height < Math.min(imageWidth, imageHeight) * 0.12 ? 80 : 0;
   const tinyCellPenalty = Math.min(rect.width / state.board.width, rect.height / state.board.height) < 18 ? 70 : 0;
   const imageRelativeCellPenalty = Math.min(cellW, cellH) < Math.min(imageWidth, imageHeight) * 0.035 ? 95 : 0;
@@ -997,9 +1391,13 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
   const noBarEvidencePenalty = features.barEvidence < 0.035 ? 45 : 0;
   const barEvidenceBonus = -Math.min(22, features.barEvidence * 80);
   const barPixelBonus = -Math.min(64, features.barPixelScore * 0.9);
+  const edgeBonus = -Math.min(46, features.edgeEvidence * 80);
+  const periodicBonus = -Math.min(42, features.periodicEvidence * 85);
   const upperLeftBonus = (rect.x / imageWidth) * 12 + (rect.y / imageHeight) * 8;
   if (wideAspectPenalty) reasons.push("横長");
   if (cellRatioPenalty) reasons.push("セル比率異常");
+  if (leftHudPenalty) reasons.push("左説明領域");
+  if (centerBandPenalty) reasons.push("左寄り");
   if (rightPenalty) reasons.push("右側に寄りすぎ");
   if (rightPanelPenalty) reasons.push("右パネル領域");
   if (tooShortPenalty) reasons.push("高さが小さい");
@@ -1015,6 +1413,8 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
     aspectPenalty +
     wideAspectPenalty +
     cellRatioPenalty +
+    leftHudPenalty +
+    centerBandPenalty +
     rightPenalty +
     rightPanelPenalty +
     tooShortPenalty +
@@ -1027,6 +1427,8 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
     noBarEvidencePenalty +
     barEvidenceBonus +
     barPixelBonus +
+    edgeBonus +
+    periodicBonus +
     upperLeftBonus;
   return {
     source,
@@ -1038,7 +1440,6 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
       tooShortPenalty >= 80 ||
       tinyCellPenalty >= 70 ||
       imageRelativeCellPenalty >= 95 ||
-      rightPanelPenalty >= 160 ||
       aspectRatio > 1.6 ||
       cellRatio < 0.55 ||
       cellRatio > 1.8,
@@ -1053,6 +1454,10 @@ function scoreRectCandidate(rect, imageWidth, imageHeight, ctx, source) {
       pieceColor: features.pieceColor,
       barEvidence: features.barEvidence,
       barPixelScore: features.barPixelScore,
+      edgeEvidence: features.edgeEvidence,
+      periodicEvidence: features.periodicEvidence,
+      leftHudPenalty,
+      centerBandPenalty,
     },
   };
 }
@@ -1076,6 +1481,8 @@ function gridCandidateImageFeatures(ctx, rect) {
     pieceColor: inner.pieceColor,
     barEvidence: top.pieceColor + left.pieceColor,
     barPixelScore,
+    edgeEvidence: 0,
+    periodicEvidence: 0,
   };
 }
 
@@ -1179,7 +1586,7 @@ function candidateSummary(candidates) {
       const d = candidate.details || {};
       const anchor = d.anchorScale ? ` 拡${Number(d.anchorScale).toFixed(2)}` : "";
       const lowerRight = d.lowerRightEvidence ? ` 右下${Number(d.lowerRightEvidence).toFixed(2)}` : "";
-      return `${index + 1}) ${candidate.source} ${candidate.score.toFixed(1)} ${candidate.rect.width.toFixed(0)}x${candidate.rect.height.toFixed(0)} ${candidate.reasons.join("/")} 比${Number(d.cellRatio || 0).toFixed(2)} 横${Number(d.aspectRatio || 0).toFixed(2)} 盤${Number(d.texture || 0).toFixed(2)} 色${Number(d.pieceColor || 0).toFixed(2)}${anchor}${lowerRight}`;
+      return `${index + 1}) ${candidate.source} ${candidate.score.toFixed(1)} ${candidate.rect.width.toFixed(0)}x${candidate.rect.height.toFixed(0)} ${candidate.reasons.join("/")} 比${Number(d.cellRatio || 0).toFixed(2)} 横${Number(d.aspectRatio || 0).toFixed(2)} 盤${Number(d.texture || 0).toFixed(2)} 外${Number(d.edgeEvidence || 0).toFixed(2)} 周${Number(d.periodicEvidence || 0).toFixed(2)} 軸${Number(d.axisBarEvidence || 0).toFixed(2)} 不可${Number(d.blockedEvidence || 0).toFixed(0)} 左${Number(d.leftHudPenalty || 0).toFixed(0)} バー${Number(d.barEvidence || 0).toFixed(2)} 色${Number(d.pieceColor || 0).toFixed(2)}${anchor}${lowerRight}`;
     })
     .join(" / ");
 }
@@ -1238,11 +1645,19 @@ function autoDetectBoardGridLegacy() {
     height: ySet[ySet.length - 1] - ySet[0],
   };
   const gridFit = fitBoardGridFromBars(ctx, roughRect);
-  state.referenceImage.boardRect = gridFit.rect;
-  state.referenceImage.gridX = gridFit.gridX;
-  state.referenceImage.gridY = gridFit.gridY;
-  state.referenceImage.manualBoardRect = false;
-  state.analysis.board = { confidence: gridFit.confidence, source: "legacy", notes: gridFit.notes };
+  const legacyCandidate = {
+    ...scoreRectCandidate(gridFit.rect, canvas.width, canvas.height, ctx, "legacy"),
+    rect: gridFit.rect,
+    xSet: gridFit.gridX,
+    ySet: gridFit.gridY,
+    gridX: gridFit.gridX,
+    gridY: gridFit.gridY,
+    confidence: gridFit.confidence,
+    notes: gridFit.notes,
+    reasons: ["簡易解析", `バー補正${gridFit.confidence}`],
+  };
+  applyBoardCandidate(legacyCandidate, 0);
+  state.analysis.boardCandidates = [simplifyBoardCandidate(legacyCandidate)];
   state.referenceImage.debug = true;
   state.referenceImage.debugItems = boardGridLineDebugItems(gridFit.gridX, gridFit.gridY, gridFit.rect);
   renderReferenceImage();
@@ -1782,7 +2197,15 @@ function renderDiagnostics() {
     rows.push(`
       <div class="diagnostic-row diagnostic-wide">
         <strong>盤面</strong>
-        <span>信頼度 ${state.analysis.board.confidence || "不明"} / 不可 ${state.analysis.board.blockedCount ?? "-"} / 固定 ${state.analysis.board.fixedCount ?? "-"}${state.analysis.board.notes?.length ? ` / ${escapeHtml(state.analysis.board.notes.join(" / "))}` : ""}</span>
+        <span>信頼度 ${state.analysis.board.confidence || "不明"} / score ${Number(state.analysis.board.score || 0).toFixed(1)} / 不可 ${state.analysis.board.blockedCount ?? "-"} / 固定 ${state.analysis.board.fixedCount ?? "-"}${state.analysis.board.notes?.length ? ` / ${escapeHtml(state.analysis.board.notes.join(" / "))}` : ""}</span>
+      </div>
+    `);
+  }
+  if (state.analysis.boardCandidates?.length) {
+    rows.push(`
+      <div class="diagnostic-row diagnostic-wide">
+        <strong>候補</strong>
+        <span>${escapeHtml(candidateSummary(state.analysis.boardCandidates.slice(0, 4)))}</span>
       </div>
     `);
   }
@@ -1866,6 +2289,114 @@ function renderDiagnostics() {
     `);
   }
   box.innerHTML = rows.join("");
+}
+
+function renderBoardCandidatePanel() {
+  const panel = $("boardCandidatePanel");
+  if (!panel) return;
+  const candidates = state.analysis.boardCandidates || [];
+  const hasCopyTarget = Boolean(state.referenceImage.src && (candidates.length || state.referenceImage.boardRect));
+  if (!hasCopyTarget) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+  const selected = state.analysis.selectedBoardCandidateIndex || 0;
+  panel.innerHTML = `
+    <div class="board-candidate-head">
+      <strong>盤面候補</strong>
+      <button data-action="copy-board-diagnostics">補正データをコピー</button>
+    </div>
+    ${candidates.length ? `
+      <div class="board-candidate-list">
+        ${candidates
+          .map((candidate, index) => renderBoardCandidateOption(candidate, index, selected))
+          .join("")}
+      </div>
+    ` : `
+      <div class="board-candidate-empty">手動補正済みです。コピーすると正解枠として記録できます。</div>
+    `}
+  `;
+  panel.querySelectorAll("[data-board-candidate]").forEach((button) => {
+    button.addEventListener("click", () => useBoardCandidate(Number(button.dataset.boardCandidate)));
+  });
+  panel.querySelector('[data-action="copy-board-diagnostics"]')?.addEventListener("click", copyBoardDiagnostics);
+}
+
+function renderBoardCandidateOption(candidate, index, selectedIndex) {
+  const d = candidate.details || {};
+  const isSelected = index === selectedIndex;
+  const meta = [
+    `score ${Number(candidate.score || 0).toFixed(1)}`,
+    candidate.confidence ? `信頼 ${candidate.confidence}` : "",
+    `盤 ${Number(d.texture || 0).toFixed(2)}`,
+    `外 ${Number(d.edgeEvidence || 0).toFixed(2)}`,
+    `周 ${Number(d.periodicEvidence || 0).toFixed(2)}`,
+    `軸 ${Number(d.axisBarEvidence || 0).toFixed(2)}`,
+    `不可 ${Number(d.blockedEvidence || 0).toFixed(0)}`,
+    `左 ${Number(d.leftHudPenalty || 0).toFixed(0)}`,
+    `バー ${Number(d.barEvidence || 0).toFixed(2)}`,
+  ].filter(Boolean).join(" / ");
+  const rect = candidate.rect || {};
+  return `
+    <button class="board-candidate-option ${isSelected ? "selected" : ""}" data-board-candidate="${index}">
+      <span>${isSelected ? "採用中" : `候補 ${index + 1}`} / ${escapeHtml(candidate.source || "-")}</span>
+      <small>${escapeHtml(meta)}</small>
+      <small>${Number(rect.x || 0).toFixed(0)}, ${Number(rect.y || 0).toFixed(0)} / ${Number(rect.width || 0).toFixed(0)} x ${Number(rect.height || 0).toFixed(0)}</small>
+    </button>
+  `;
+}
+
+function useBoardCandidate(index) {
+  const candidate = state.analysis.boardCandidates?.[index];
+  if (!candidate || !applyBoardCandidate(candidate, index)) return;
+  state.referenceImage.debug = true;
+  state.referenceImage.debugItems = [
+    ...gridCandidateDebugItems(state.analysis.boardCandidates.slice(0, 3)),
+    ...boardGridLineDebugItems(candidate.gridX, candidate.gridY, candidate.rect),
+  ];
+  calibrateColorsFromReferenceImage();
+  detectBoardCells({ fixedColors: true });
+  detectRequirementBars();
+  state.pieces = [];
+  state.pieceCandidatesByCard = [];
+  state.analysis.pieces = null;
+  detectPieces();
+  solveSmart();
+  $("statusBox").className = "status";
+  $("statusBox").textContent = `盤面候補 ${index + 1} を採用して読み直しました。黄色い枠がまだずれていたら、左上1マスで補正してください。`;
+  render();
+}
+
+async function copyBoardDiagnostics() {
+  const payload = boardDiagnosticsPayload();
+  const text = JSON.stringify(payload, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    $("statusBox").className = "status";
+    $("statusBox").textContent = "盤面補正データをコピーしました。失敗スクショのメモと一緒に保存できます。";
+  } catch {
+    console.info("Board diagnostics", payload);
+    $("statusBox").className = "status";
+    $("statusBox").textContent = "クリップボードに書き込めなかったため、コンソールに補正データを出しました。";
+  }
+}
+
+function boardDiagnosticsPayload() {
+  return {
+    image: state.imageBitmap
+      ? { width: state.imageBitmap.naturalWidth, height: state.imageBitmap.naturalHeight }
+      : null,
+    boardSize: { width: state.board.width, height: state.board.height },
+    selectedCandidateIndex: state.analysis.selectedBoardCandidateIndex || 0,
+    selectedRect: state.referenceImage.boardRect ? roundRect(state.referenceImage.boardRect) : null,
+    selectedGridX: (state.referenceImage.gridX || []).map((value) => Number(value.toFixed(2))),
+    selectedGridY: (state.referenceImage.gridY || []).map((value) => Number(value.toFixed(2))),
+    manual: Boolean(state.referenceImage.manualBoardRect),
+    candidates: state.analysis.boardCandidates || [],
+    boardAnalysis: state.analysis.board || null,
+  };
 }
 
 function lockedRequirementSummary() {

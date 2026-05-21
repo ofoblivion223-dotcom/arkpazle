@@ -642,6 +642,71 @@ p {
   padding: 10px 12px;
 }
 
+.board-candidate-panel {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line-bright);
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  background: #101010;
+  padding: 10px;
+  font-size: 12px;
+}
+
+.board-candidate-head,
+.board-candidate-list {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.board-candidate-head {
+  justify-content: space-between;
+}
+
+.board-candidate-head strong {
+  color: var(--accent);
+  font-family: var(--font-display);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.board-candidate-head button {
+  min-height: 32px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.board-candidate-list {
+  flex-wrap: wrap;
+}
+
+.board-candidate-option {
+  min-height: 0;
+  display: grid;
+  gap: 2px;
+  min-width: 176px;
+  border-color: var(--line);
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.board-candidate-option span {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.board-candidate-option small,
+.board-candidate-empty {
+  color: var(--muted);
+}
+
+.board-candidate-option.selected {
+  border-color: var(--accent);
+  background: rgba(255, 250, 0, 0.12);
+}
+
 .flow-strip {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
